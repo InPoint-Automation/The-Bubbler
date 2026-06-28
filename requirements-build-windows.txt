@@ -10,3 +10,4 @@ onnxruntime-directml>=1.17       # DX12 EP
 paddleocr>=3.2                   # PP-OCRv4 + VL
 paddlepaddle>=3.0                # CPU
 tokenizers>=0.15                 # Florence-2
+imageio

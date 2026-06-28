@@ -10,3 +10,4 @@ onnxruntime>=1.17                # CPU EP
 paddleocr>=3.2                   # PP-OCRv4 + VL
 paddlepaddle>=3.0
 tokenizers>=0.15                 # Florence-2
+imageio

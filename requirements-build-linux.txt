@@ -10,3 +10,4 @@ onnxruntime-gpu>=1.17            # CUDA EP
 paddleocr>=3.2                   # PP-OCRv4 + VL
 paddlepaddle-gpu>=2.6.2.0
 tokenizers>=0.15                 # Florence-2
+imageio
