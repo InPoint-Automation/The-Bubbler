@@ -1,0 +1,12 @@
+# Linux build deps: inference only, CUDA.
+
+PyMuPDF==1.27.2.3
+openpyxl==3.1.5
+PySide6==6.10.2
+
+numpy>=1.26,<3
+rapidocr-onnxruntime>=1.2.3,<2   # OCR 1
+onnxruntime-gpu>=1.17            # CUDA EP
+paddleocr>=3.2                   # PP-OCRv4 + VL
+paddlepaddle-gpu>=2.6.2.0
+tokenizers>=0.15                 # Florence-2

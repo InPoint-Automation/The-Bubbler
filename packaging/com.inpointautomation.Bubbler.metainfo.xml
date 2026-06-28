@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.inpointautomation.Bubbler</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Bubbler</name>
+  <summary>Balloon PDF engineering drawings and generate inspection sheets</summary>
+  <description>
+    <p>
+      Bubbler balloons a PDF engineering drawing and speeds the process with
+      OCR/computer vision where possible. Exports bubbled PDF and .xlsx
+      inspection sheet. Runs fully offline.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>TBD</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.inpointautomation.Bubbler.desktop</launchable>
+  <categories>
+    <category>Graphics</category>
+    <category>Engineering</category>
+  </categories>
+  <keywords>
+    <keyword>GD&amp;T</keyword>
+    <keyword>inspection</keyword>
+    <keyword>ballooning</keyword>
+    <keyword>drawing</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/InPoint-Automation/The-Bubbler</url>
+  <url type="bugtracker">https://github.com/InPoint-Automation/The-Bubbler/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Ballooned drawing</caption>
+      <image>https://raw.githubusercontent.com/InPoint-Automation/The-Bubbler/main/img/example.png</image>
+    </screenshot>
+  </screenshots>
+  <developer id="com.inpointautomation">
+    <name>InPoint Automation Sp. z o.o.</name>
+  </developer>
+  <provides>
+    <binary>Bubbler</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <!-- <releases> injected by make_appimage.py from VERSION in bubbler/common.py -->
+</component>
