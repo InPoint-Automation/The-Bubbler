@@ -13,21 +13,25 @@ from PySide6.QtWidgets import QToolButton
 
 
 def _icon_dir():
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "icons_svg"),
+        os.path.join(os.path.dirname(here), "icons_svg"),
+        os.path.join(os.path.dirname(os.path.dirname(here)), "icons_svg"),
+    ]
     try:
-        base = __compiled__.containing_dir
-        for p in (os.path.join(base, "icons_svg"),
-                  os.path.join(base, "bubbler", "icons_svg")):
-            if os.path.isdir(p):
-                return p
+        candidates.append(os.path.join(__compiled__.containing_dir, "icons_svg"))
     except NameError:
         pass
+    candidates.append(os.path.join(os.path.dirname(sys.argv[0]), "icons_svg"))
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        for p in (os.path.join(base, "icons_svg"),
-                  os.path.join(base, "bubbler", "icons_svg")):
-            if os.path.isdir(p):
-                return p
-    return os.path.join(os.path.dirname(__file__), "icons_svg")
+        candidates.append(os.path.join(base, "icons_svg"))
+        candidates.append(os.path.join(base, "bubbler", "icons_svg"))
+    for p in candidates:
+        if os.path.isdir(p):
+            return p
+    return os.path.join(here, "icons_svg")
 
 
 # Per-icon accents

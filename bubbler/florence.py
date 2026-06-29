@@ -45,19 +45,20 @@ _DEFAULT_PACKS = ("florence2", "florence2-base-ft")
 
 
 def _model_roots(model_root=None):
-    """Candidate bubbler/models dirs in priority order."""
+    """Candidate models dirs in priority order."""
     import sys
     roots = []
     if model_root:
         roots.append(model_root)
     here = os.path.dirname(os.path.abspath(__file__))
     roots.append(os.path.join(here, "models"))
+    roots.append(os.path.join(os.path.dirname(here), "models"))
+    roots.append(os.path.join(os.path.dirname(os.path.dirname(here)), "models"))
     try:
-        base = __compiled__.containing_dir
-        roots.append(os.path.join(base, "models"))
-        roots.append(os.path.join(base, "bubbler", "models"))
+        roots.append(os.path.join(__compiled__.containing_dir, "models"))
     except NameError:
         pass
+    roots.append(os.path.join(os.path.dirname(sys.argv[0]), "models"))
     base = getattr(sys, "_MEIPASS", None)
     if base:
         roots.append(os.path.join(base, "models"))
