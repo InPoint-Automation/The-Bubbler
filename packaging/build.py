@@ -17,6 +17,10 @@ REPO = Path(__file__).resolve().parent.parent
 BIN = REPO / "bin"
 OS = platform.system()
 
+# PaddleOCR is excluded on macOS
+# TODO: re-enable paddle on macOS (openblas or patch dylib rpath).
+PADDLE = OS != "Darwin"
+
 
 def _meta() -> dict:
     """Parse common.py metadata without importing it."""
@@ -48,9 +52,7 @@ APP = {
     "include_package_data": [
         "rapidocr_onnxruntime",
         "onnxruntime",
-        "paddleocr",
-        "paddle",
-    ],
+    ] + (["paddleocr", "paddle"] if PADDLE else []),
 
     "include_modules": [
         "openpyxl.cell._writer",
@@ -72,7 +74,7 @@ APP = {
         "torch", "ultralytics", "onnx", "onnxsim",
         "scipy", "pandas", "matplotlib",
         "PyQt5", "PySide2", "tkinter", "pytest", "tornado", "IPython",
-    ],
+    ] + ([] if PADDLE else ["paddle", "paddleocr"]),
 }
 
 
@@ -95,7 +97,7 @@ def flags() -> list[str]:
         "--show-modules",
     ]
 
-    if OS == "Linux" and os.environ.get("BUBBLER_CLANG", "1") not in ("0", "false"):
+    if OS in ("Linux", "Windows") and os.environ.get("BUBBLER_CLANG", "1") not in ("0", "false"):
         f.append("--clang")
     if os.environ.get("BUBBLER_LOWMEM", "0") in ("1", "true"):
         f.append("--low-memory")
@@ -147,8 +149,8 @@ def flags() -> list[str]:
 
 
 def main() -> int:
-    print("=== Nuitka build: %s %s (os=%s) ===" % (
-        APP["name"], META["version"], OS))
+    print("=== Nuitka build: %s %s (os=%s, paddle=%s) ===" % (
+        APP["name"], META["version"], OS, "on" if PADDLE else "off"))
 
     for stale in (
         BIN / f"{APP['name']}.exe",
