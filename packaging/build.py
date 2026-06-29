@@ -59,9 +59,9 @@ APP = {
     ],
 
     "data_dirs": [
-        ("bubbler/icons_svg", "bubbler/icons_svg"),
+        ("bubbler/icons_svg", "icons_svg"),
     ] + ([
-        ("bubbler/models", "bubbler/models"),
+        ("bubbler/models", "models"),
     ] if (REPO / "bubbler" / "models").is_dir() else []),
 
     "data_files": [],

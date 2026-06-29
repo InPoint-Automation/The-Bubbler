@@ -13,11 +13,18 @@ from PySide6.QtWidgets import QToolButton
 
 
 def _icon_dir():
-    # frozen path first, dev path fallback
+    try:
+        base = __compiled__.containing_dir
+        for p in (os.path.join(base, "icons_svg"),
+                  os.path.join(base, "bubbler", "icons_svg")):
+            if os.path.isdir(p):
+                return p
+    except NameError:
+        pass
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        for p in (os.path.join(base, "bubbler", "icons_svg"),
-                  os.path.join(base, "icons_svg")):
+        for p in (os.path.join(base, "icons_svg"),
+                  os.path.join(base, "bubbler", "icons_svg")):
             if os.path.isdir(p):
                 return p
     return os.path.join(os.path.dirname(__file__), "icons_svg")
