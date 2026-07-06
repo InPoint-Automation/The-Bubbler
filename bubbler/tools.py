@@ -1,7 +1,9 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Canvas tool strategies. Per-tool press/click/drag.
+# Canvas tool strategies.
+
+from .i18n import tr
 
 
 class Tool:
@@ -11,26 +13,25 @@ class Tool:
         self.w = win
 
     def press_empty(self, sp, predict):
-        """Plain press on empty canvas."""
+        pass
 
     def click_bubble(self, base):
-        """Click on a bubble."""
+        pass
 
     def click_empty(self, sp):
-        """Click on empty canvas."""
+        pass
 
     def drag_bubble(self, base, p):
-        """Drag a bubble numeral to page point p."""
+        pass
 
     def ctrl_click_bubble(self, base):
-        """Ctrl+click on a bubble."""
+        pass
 
 
 class AddTool(Tool):
     name = "add"
 
     def press_empty(self, sp, predict):
-        # plain click runs OCR/VLM capture
         if predict:
             self.w.on_capture_press(sp)
 
@@ -44,9 +45,8 @@ class AddTool(Tool):
         self.w._set_bubble_pos(base, bx=p[0], by=p[1])
 
     def ctrl_click_bubble(self, base):
-        # undoable, no prompt
         self.w._delete_bases([base])
-        self.w.set_status("deleted #%s / usunięto - Ctrl+Z" % base)
+        self.w.set_status(tr('deleted #%s') % base)
 
 
 class SelectTool(Tool):
@@ -59,10 +59,9 @@ class SelectTool(Tool):
         self.w._select_base(base, add=False)
 
     def click_empty(self, sp):
-        pass    # marquee handles deselect
+        pass
 
     def drag_bubble(self, base, p):
-        # selected bubble moves whole selection
         if base in self.w._sel_bases():
             self.w._move_selection(base, p)
         else:
@@ -73,5 +72,4 @@ class SelectTool(Tool):
 
 
 def make_tools(win):
-    """name -> tool strategy for a window."""
     return {t.name: t(win) for t in (AddTool, SelectTool)}

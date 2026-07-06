@@ -2,7 +2,6 @@
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
 # Drawing PDFs -> PNG backgrounds.
-# python train/render_bgs.py --pdfs /path/to/pdfs --out train/bgs --dpi 150
 import argparse
 import glob
 import os

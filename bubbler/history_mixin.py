@@ -1,7 +1,8 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
-#
 # Undo / redo for MainWindow.
+
+from .i18n import tr
 
 
 class HistoryMixin:
@@ -38,11 +39,11 @@ class HistoryMixin:
             return
         self._redo.append(self.store.snapshot_state())
         self._restore(self._undo.pop())
-        self.set_status("undo / cofnięto")
+        self.set_status(tr('undo'))
 
     def redo(self):
         if not self._redo:
             return
         self._undo.append(self.store.snapshot_state())
         self._restore(self._redo.pop())
-        self.set_status("redo / ponowiono")
+        self.set_status(tr('redo'))

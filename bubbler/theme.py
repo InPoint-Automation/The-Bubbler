@@ -5,25 +5,22 @@
 
 from PySide6.QtGui import QColor
 
-from .icons import spin_arrow_png
+from .icons import spin_arrow_png, check_png
 
 
-# MS-Office 2010 "blue ribbon" palette.
 OFFICE = {
     "text":    "#1e1e1e",
     "muted":   "#5a6472",
-    "accent":  "#2b579a",   # Office blue
+    "accent":  "#2b579a",
     "green":   "#1e7c2f",
-    "sel":     "#fdf4bf",   # warm hover highlight (Office gold)
+    "sel":     "#fdf4bf",
     "sel_bd":  "#e5c365",
-    # vertical gradients
     "g_window":  "qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #eaeef5, "
-                 "stop:1 #d6deea)",                  # app chrome
+                 "stop:1 #d6deea)",
     "g_ribbon":  "qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #f6f9fd, "
-                 "stop:1 #dde6f2)",                  # ribbon / toolbar
+                 "stop:1 #dde6f2)",
     "g_btn":     "qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #fdfefe, "
                  "stop:0.5 #f0f4fa, stop:0.5 #e6edf6, stop:1 #f3f7fc)",
-    # resting state
     "g_rest":    "qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #fdfeff, "
                  "stop:1 #eef2f9)",
     "rest_bd":   "#d3dcea",
@@ -39,10 +36,10 @@ OFFICE = {
                    "stop:0.5 #4378bd, stop:0.5 #3463a9, stop:1 #5286cf)",
     "g_head":    "qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #eef2f8, "
                  "stop:1 #d4deec)",
-    "border":    "#a3b4cc",   # button / field outline
-    "border_lt": "#c3cfe0",   # subtle separators
-    "surface":   "#ffffff",   # text fields, list bodies
-    "alt":       "#eef3fa",   # alternating rows
+    "border":    "#a3b4cc",
+    "border_lt": "#c3cfe0",
+    "surface":   "#ffffff",
+    "alt":       "#eef3fa",
 }
 
 OFFICE_QSS = """
@@ -108,6 +105,23 @@ QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {{
 QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{
     image:url({arrow_dn_dis}); }}
 QCheckBox, QLabel, QRadioButton {{ background:transparent; color:{text}; }}
+QCheckBox::indicator, QGroupBox::indicator,
+QTreeView::indicator, QTableView::indicator, QListView::indicator {{
+    width:14px; height:14px; border:1px solid {border};
+    border-radius:3px; background:{surface}; }}
+QCheckBox::indicator:hover, QGroupBox::indicator:hover {{
+    border:1px solid {accent}; }}
+QCheckBox::indicator:checked, QGroupBox::indicator:checked,
+QTreeView::indicator:checked, QTableView::indicator:checked,
+QListView::indicator:checked {{
+    background:{accent}; border:1px solid {accent}; image:url({check}); }}
+QCheckBox::indicator:indeterminate {{
+    background:{muted}; border:1px solid {muted}; }}
+QCheckBox::indicator:disabled, QGroupBox::indicator:disabled {{
+    border:1px solid {border_lt}; background:{alt}; }}
+QCheckBox::indicator:checked:disabled {{
+    background:{border_lt}; border:1px solid {border_lt};
+    image:url({check_dis}); }}
 
 QMenu {{ background:#fbfcfe; border:1px solid {border}; padding:3px; }}
 QMenu::item {{ padding:5px 26px 5px 22px; border-radius:4px; color:{text}; }}
@@ -152,15 +166,15 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background:transparent; }}
     arrow_dn=spin_arrow_png("down", OFFICE["accent"]),
     arrow_up_dis=spin_arrow_png("up", OFFICE["muted"]),
     arrow_dn_dis=spin_arrow_png("down", OFFICE["muted"]),
+    check=check_png("#ffffff"),
+    check_dis=check_png(OFFICE["muted"]),
     **OFFICE)
 
 
 def apply_office_theme(app):
-    """Force light MS-Office look regardless of host theme."""
     from PySide6.QtGui import QPalette
     app.setStyle("Fusion")
     pal = QPalette()
-    # solid fallbacks, QSS paints gradients
     pal.setColor(QPalette.Window, QColor("#e2e8f2"))
     pal.setColor(QPalette.WindowText, QColor(OFFICE["text"]))
     pal.setColor(QPalette.Base, QColor(OFFICE["surface"]))

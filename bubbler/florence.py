@@ -5,24 +5,20 @@
 import os
 import re
 
-# Task token -> processor prompt text.
 _TASK = "<OCR_WITH_REGION>"
 _TASK_PROMPTS = {
     "<OCR>": "What is the text in the image?",
     "<OCR_WITH_REGION>": "What is the text in the image, with regions?",
 }
 
-# ImageNet normalisation + square input size.
 _IMG_SIZE = 768
 _MEAN = (0.485, 0.456, 0.406)
 _STD = (0.229, 0.224, 0.225)
 
-# BART special ids: pad=1, bos=0, eos=2, decoder_start=2.
 _DECODER_START = 2
 _EOS = 2
 _MAX_NEW_TOKENS = 1024
 
-# Graph stem -> accepted basenames, first existing wins.
 _GRAPHS = {
     "vision_encoder": ("vision_encoder", "vision_encoder_fp16",
                        "vision_encoder_int8", "vision_encoder_quantized"),
@@ -36,16 +32,13 @@ _GRAPHS = {
 }
 
 _LOC = re.compile(r"<loc_(\d+)>")
-# Text run plus its 8 quad-corner loc tokens.
 _SEG = re.compile(r"(.+?)((?:<loc_\d+>){8})", re.S)
-_SPECIAL = re.compile(r"</?s>|<pad>")              # BART specials
+_SPECIAL = re.compile(r"</?s>|<pad>")
 
-# Bundled-default packs, searched in order.
 _DEFAULT_PACKS = ("florence2", "florence2-base-ft")
 
 
 def _model_roots(model_root=None):
-    """Candidate models dirs in priority order."""
     import sys
     roots = []
     if model_root:
@@ -67,7 +60,6 @@ def _model_roots(model_root=None):
 
 
 def model_dir(cfg, model_root=None):
-    """Resolve the Florence-2 pack directory, or None."""
     roots = _model_roots(model_root)
     p = (cfg or {}).get("vision_vlm_model")
     if p:
@@ -94,7 +86,6 @@ def _find_graph(onnx_dir, names):
 
 
 def _is_pack(d):
-    """True if d has tokenizer + all four graphs."""
     if not os.path.isdir(d) or not os.path.exists(
             os.path.join(d, "tokenizer.json")):
         return False
@@ -105,7 +96,6 @@ def _is_pack(d):
 
 
 def list_packs(model_root=None):
-    """Valid florence2* pack basenames, first root wins."""
     out, seen = [], set()
     for root in _model_roots(model_root):
         if not os.path.isdir(root):
@@ -120,7 +110,6 @@ def list_packs(model_root=None):
 
 
 def can_load(cfg, model_root=None):
-    """Cheap availability probe before load."""
     mp = model_dir(cfg, model_root)
     if mp is None:
         return False
@@ -149,7 +138,6 @@ class Florence2:
         self._tok = tok
         self._np = np
         self._warmed = False
-        # decoder KV layout from graph IO names
         self._dec_past_in = [i.name for i in
                              sessions["decoder_model_merged"].get_inputs()
                              if i.name.startswith("past_key_values")]
@@ -159,7 +147,6 @@ class Florence2:
 
     @classmethod
     def load(cls, providers, model_path):
-        """Open the four graphs + tokenizer, or None."""
         if model_path is None:
             return None
         onnx_dir = os.path.join(model_path, "onnx")
@@ -201,7 +188,7 @@ class Florence2:
         mean = np.array(_MEAN, dtype="float32").reshape(1, 1, 3)
         std = np.array(_STD, dtype="float32").reshape(1, 1, 3)
         arr = (arr - mean) / std
-        arr = np.transpose(arr, (2, 0, 1))[None]          # NCHW
+        arr = np.transpose(arr, (2, 0, 1))[None]
         return np.ascontiguousarray(arr, dtype="float32")
 
     def _resize(self, img_rgb, out_w, out_h):
@@ -211,7 +198,6 @@ class Florence2:
             im = Image.fromarray(img_rgb).resize((out_w, out_h), Image.BILINEAR)
             return np.asarray(im)
         except Exception:
-            # nearest-neighbour fallback
             yi = (np.linspace(0, img_rgb.shape[0] - 1, out_h)).astype("int64")
             xi = (np.linspace(0, img_rgb.shape[1] - 1, out_w)).astype("int64")
             return img_rgb[yi][:, xi]
@@ -222,7 +208,6 @@ class Florence2:
         return s.run(None, {name: input_ids})[0]
 
     def _encode(self, pixel_values):
-        """Vision encoder + text embed -> (encoder_hidden_states, mask)."""
         np = self._np
         vis = self._s["vision_encoder"]
         image_features = vis.run(
@@ -243,7 +228,6 @@ class Florence2:
         return enc_hidden, attn
 
     def _empty_past(self):
-        """Zero-length past_key_values so the decoder runs its no-cache branch."""
         np = self._np
         dec = self._s["decoder_model_merged"]
         shapes = {i.name: i.shape for i in dec.get_inputs()}
@@ -254,10 +238,9 @@ class Florence2:
                 if isinstance(d, int):
                     dims.append(d)
                 elif "head" in str(d) and "dim" not in str(d):
-                    dims.append(12)            # num_heads
+                    dims.append(12)
                 else:
-                    dims.append(0)             # symbolic
-            # [batch, heads, seq, head_dim]
+                    dims.append(0)
             if len(dims) == 4:
                 dims[0] = 1
                 dims[2] = 0
@@ -307,7 +290,6 @@ class Florence2:
             if next_id == _EOS and len(generated) > 1:
                 break
             generated.append(next_id)
-            # keep cross-attn KV from step 1
             new_past = {pkv: od[o] for o, pkv in dec_present.items()}
             for o, pkv in enc_present.items():
                 new_past[pkv] = od[o] if not use_cache else past[pkv]

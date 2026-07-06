@@ -6,8 +6,8 @@
 import re as _re
 
 from .scanlib import SCAN_PATS, _GDT_SYMBOLS
+from .common import mode_admits_tp
 
-# geometry helpers
 
 def _union(a, b):
     return (min(a[0], b[0]), min(a[1], b[1]),
@@ -35,14 +35,11 @@ def _lheight(line):
     return max(2.0, hs[len(hs) // 2])
 
 
-# token normalization
-
 _GLYPHS = {
     "\u00f8": "\u00d8", "\u2300": "\u00d8", "\u2205": "\u00d8",
     "\uf044": "\u00d8", "\uf064": "\u00d8",
     "\uf052": "\u00b1", "\uf072": "\u00b1",
     "\uf030": "\u00b0",
-    # typographic minus signs
     "\u2212": "-", "\u2013": "-", "\u2011": "-",
 }
 
@@ -54,7 +51,6 @@ _SYMBOLS = {
     "\u25bf": "DEEP", "\u25bc": "DEEP", "\u2207": "DEEP",
 }
 
-# Token keyword -> canonical, gated by cond.
 _KEYWORDS = [
     (("THROUGH",), "THRU", None),
     (("PRZELOTOWY",), "THRU", None),
@@ -126,29 +122,21 @@ def _norm_token(s):
         s = s.replace(a, b)
     for a, b in _SYMBOLS.items():
         s = s.replace(a, " %s " % b)
-    # GD&T control-frame glyphs -> spelled keyword.
     for a, b in _GDT_SYMBOLS:
         if a in s:
             s = s.replace(a, b)
-    # fused repeat count: "4PLACES" -> "4X"
     s = _COUNT_RE.sub(lambda m: m.group(1) + "X", s)
-    # fused diameter word: "DIAM.25" / "DIA25" -> "Ø25"
     s = _re.sub(r"\bDIAM?\.?(?=[\d.])", "\u00d8", s, flags=_re.I)
-    # \u00c6/\u00e6 as broken \u00d8 glyph, digit context only.
     s = _re.sub(r"[\u00c6\u00e6](?=\s*\d)", "\u00d8", s)
-    # lone O/o/Q/phi/theta glued to a digit -> \u00d8.
     s = _re.sub(r"(?<![A-Za-z0-9.,])[OoQ\u03a6\u03c6\u0398\u03b8](?=\d)",
                 "\u00d8", s)
-    # ASCII 0 glued to a dimension number -> \u00d8.
     s = _re.sub(r"(?<![\dA-Za-z.,/+\-])0(?=\d{1,3}(?:[.,]\d+)?(?![\d.,\-]))",
                 "\u00d8", s)
-    # fused signed pair: "-0,018+0,000" -> slashed.
     s = _re.sub(r"([+\-]\d+[.,]\d+)(?=[+\-]\d+[.,]\d+)", r"\1/", s)
     return s
 
 
 def _normalize_line(line):
-    # split tokens share the parent rect
     toks = []
     for t in line["toks"]:
         s = _norm_token(t["t"]).strip()
@@ -157,7 +145,6 @@ def _normalize_line(line):
         for part in s.split():
             toks.append({"t": part, "r": t["r"]})
 
-    # keyword substitution
     out = []
     i = 0
     while i < len(toks):
@@ -183,7 +170,6 @@ def _normalize_line(line):
             i += 1
     toks = out
 
-    # merges, each unions rects
     def merge_run(i, j, text):
         toks[i] = {"t": text,
                    "r": _union_all([t["r"] for t in toks[i:j + 1]])}
@@ -195,27 +181,21 @@ def _normalize_line(line):
         for i in range(len(toks) - 1):
             a, b = toks[i]["t"], toks[i + 1]["t"]
             c = toks[i + 2]["t"] if i + 2 < len(toks) else None
-            # "30" "." "5"  ->  "30.5"
             if (c is not None and b == "." and
                     _re.match(r"^\d+$", a) and _re.match(r"^\d", c)):
                 merge_run(i, i + 2, a + "." + c)
-            # "30" ".15"  ->  "30.15"
             elif (_re.match(r"^\d+$", a) and
                     _re.match(r"^\.\d{1,4}$", b)):
                 merge_run(i, i + 1, a + b)
-            # lone sign:  "+" "0.1"  ->  "+0.1"
             elif a in "+-" and _re.match(r"^[\d.][\d.,]*$", b):
                 merge_run(i, i + 1, a + b)
-            # signed pair -> joined with "/"
             elif (_re.match(r"^[+\-][\d.,]+$", a) and
                     _re.match(r"^[+\-][\d.,]+$", b)):
                 merge_run(i, i + 1, a + "/" + b)
-            # zero-bounded:  "+0.2" "0"  /  "0" "-0.1"
             elif (a == "0" and _re.match(r"^[+\-][\d.,]+$", b)):
                 merge_run(i, i + 1, "0/" + b)
             elif (b == "0" and _re.match(r"^[+\-][\d.,]+$", a)):
                 merge_run(i, i + 1, a + "/0")
-            # "4" "PLACES"  ->  "4X"
             elif (_re.match(r"^\d+$", a) and
                     _kw_key(b) in _COUNT_WORDS):
                 merge_run(i, i + 1, a + "X")
@@ -224,29 +204,23 @@ def _normalize_line(line):
             changed = True
             break
 
-    # leading-dot decimals (.531) gain their zero, after merges
     for t in toks:
         t["t"] = _re.sub(r"(?<![\w.])\.(?=\d)", "0.", t["t"])
 
     line["toks"] = toks
 
 
-# Rotation: unrotated extract -> rotated display space.
-
 def xform_pt(m, x, y):
-    """Apply a fitz.Matrix-like (a,b,c,d,e,f) to a point."""
     return (x * m.a + y * m.c + m.e, x * m.b + y * m.d + m.f)
 
 
 def xform_rect(m, x0, y0, x1, y1):
-    """Transform a rect; corners re-normalized."""
     ax, ay = xform_pt(m, x0, y0)
     bx, by = xform_pt(m, x1, y1)
     return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
 
 
 def page_words(page):
-    """page.get_text("words") in ROTATED (displayed) coordinates."""
     try:
         words = page.get_text("words")
     except Exception:
@@ -257,13 +231,15 @@ def page_words(page):
         rot = 0
     if not rot:
         return list(words)
-    m = page.rotation_matrix
+    try:
+        m = page.rotation_matrix
+    except Exception:
+        return list(words)
     return [xform_rect(m, w[0], w[1], w[2], w[3]) + tuple(w[4:])
             for w in words]
 
 
 def lines_from_words(words):
-    """Group words by (block, line), ordered by word number."""
     groups = {}
     for w in words:
         x0, y0, x1, y1, text, blk, ln, wn = w[:8]
@@ -286,7 +262,6 @@ _FIT_LINE = _re.compile(
 
 
 def _split_lines_on_gaps(lines, factor=4.0):
-    """Split where x-gap exceeds factor * text height."""
     out = []
     for l in lines:
         toks = l["toks"]
@@ -309,12 +284,10 @@ _DEPTH_MARK = _re.compile(r"\bDEEP\b", _re.I)
 
 
 def _depth_marker_idxs(lines):
-    """Lines carrying a depth marker."""
     return [i for i, l in enumerate(lines) if _DEPTH_MARK.search(_ltext(l))]
 
 
 def _depth_owned(idx, lines, markers):
-    """True when line is a depth value, not a deviation."""
     r = _lrect(lines[idx])
     h = max(r[3] - r[1], 2.0)
     for mi in markers:
@@ -322,14 +295,13 @@ def _depth_owned(idx, lines, markers):
             continue
         rm = _lrect(lines[mi])
         if min(r[2], rm[2]) - max(r[0], rm[0]) <= 0:
-            continue                          # need x overlap
+            continue
         if max(rm[1] - r[3], r[1] - rm[3], 0.0) <= 2.0 * h:
             return True
     return False
 
 
 def merge_stacked(lines):
-    """value / dev1 / dev2 stacked -> one line."""
     used = set()
     markers = _depth_marker_idxs(lines)
     devs = [i for i, l in enumerate(lines)
@@ -347,14 +319,14 @@ def merge_stacked(lines):
             tc = _ltext(lines[ci]).strip()
             if not (tb.startswith(("+", "-")) or
                     tc.startswith(("+", "-"))):
-                continue                      # need a signed member
+                continue
             h = max(rb[3] - rb[1], rc[3] - rc[1], 2.0)
             if min(rb[2], rc[2]) - max(rb[0], rc[0]) <= 0:
-                continue                      # no x overlap
+                continue
             if rc[1] < rb[1]:
-                continue                      # ci must sit below bi
+                continue
             if rc[1] - rb[3] > 1.5 * h:
-                continue                      # too far apart vertically
+                continue
             top, bot = min(rb[1], rc[1]), max(rb[3], rc[3])
             best = None
             for ai, A in enumerate(lines):
@@ -364,7 +336,7 @@ def merge_stacked(lines):
                 if not _re.search(r"\d\s*$", ta):
                     continue
                 if _DEV_LINE.match(ta.strip()):
-                    continue                  # a deviation is no value
+                    continue
                 ra = _lrect(A)
                 cy = (ra[1] + ra[3]) / 2.0
                 if not (top - h <= cy <= bot + h):
@@ -385,7 +357,6 @@ def merge_stacked(lines):
 
 
 def merge_halfstack(lines):
-    """Lone lower deviation joins the value above."""
     _TAIL = _re.compile(r"\d\s*[+\-][\d.,]*\d$")
     used = set()
     markers = _depth_marker_idxs(lines)
@@ -394,7 +365,7 @@ def merge_halfstack(lines):
         if not _DEV_LINE.match(td):
             continue
         if _depth_owned(di, lines, markers):
-            continue                          # a depth, not a deviation
+            continue
         rd = _lrect(Dv)
         h = max(rd[3] - rd[1], 2.0)
         best = None
@@ -409,7 +380,6 @@ def merge_halfstack(lines):
             vgap = max(rd[1] - ra[3], ra[1] - rd[3], 0.0)
             if vgap > 1.5 * h:
                 continue
-            # deviation hangs near value's right end
             if rd[2] < ra[0] or rd[0] > ra[2] + 4 * h:
                 continue
             score = vgap + abs(rd[0] - ra[2])
@@ -425,9 +395,8 @@ def merge_halfstack(lines):
 
 
 def merge_callout_block(lines):
-    """Collapse multi-line hole-note blocks."""
     KW = ("THRU", "DEEP", "CBORE", "CSINK")
-    for _ in range(3):                     # fixpoint for stacked blocks
+    for _ in range(3):
         used = set()
         moved = False
         for i, L in enumerate(lines):
@@ -447,15 +416,14 @@ def merge_callout_block(lines):
                 if not _re.search(r"\d", tm):
                     continue
                 if tm.strip().upper().startswith(KW):
-                    continue               # don't chain two continuations
+                    continue
                 rm = _lrect(M)
                 ov = min(rl[2], rm[2]) - max(rl[0], rm[0])
                 if ov <= 0:
-                    continue               # need x overlap
+                    continue
                 vgap = max(rm[1] - rl[3], rl[1] - rm[3], 0.0)
                 if vgap > 1.6 * h:
                     continue
-                # larger x-overlap fraction wins, vgap breaks ties
                 frac = ov / max(min(rl[2] - rl[0], rm[2] - rm[0]), 1e-6)
                 score = (-round(frac, 2), vgap)
                 if best is None or score < best[0]:
@@ -463,9 +431,9 @@ def merge_callout_block(lines):
             if best is not None:
                 M = lines[best[1]]
                 rm = _lrect(M)
-                if rl[1] >= rm[1]:         # continuation below: append
+                if rl[1] >= rm[1]:
                     M["toks"].extend(L["toks"])
-                else:                      # above: prepend
+                else:
                     M["toks"][0:0] = L["toks"]
                 used.add(i)
                 moved = True
@@ -475,8 +443,152 @@ def merge_callout_block(lines):
     return lines
 
 
+def _fcf_vector_bands(page, rect, cfg):
+    try:
+        paths = page.get_drawings()
+    except Exception:
+        return None
+    if not paths:
+        return None
+    try:
+        rot = int(getattr(page, "rotation", 0) or 0) % 360
+    except (TypeError, ValueError):
+        rot = 0
+    m = None
+    if rot:
+        try:
+            m = page.rotation_matrix
+        except Exception:
+            return None
+    x0, y0, x1, y1 = rect
+    w = x1 - x0
+    h = y1 - y0
+    if w < 4 or h < 4:
+        return None
+    tol = max(1.0, 0.06 * h)
+    xs, ys = [], []
+    for p in paths:
+        for it in (p.get("items") or []):
+            if it[0] != "l":
+                continue
+            pa, pb = it[1], it[2]
+            ax, ay, bx, by = pa.x, pa.y, pb.x, pb.y
+            if m is not None:
+                ax, ay = xform_pt(m, ax, ay)
+                bx, by = xform_pt(m, bx, by)
+            sx0, sy0 = min(ax, bx), min(ay, by)
+            sx1, sy1 = max(ax, bx), max(ay, by)
+            dx, dy = sx1 - sx0, sy1 - sy0
+            if dy >= 0.5 * h and dx <= tol:
+                cx = (sx0 + sx1) / 2.0
+                if x0 - tol <= cx <= x1 + tol:
+                    xs.append(cx)
+            elif dx >= 0.5 * w and dy <= tol:
+                cy = (sy0 + sy1) / 2.0
+                if y0 - tol <= cy <= y1 + tol:
+                    ys.append(cy)
+    inx = _cluster(sorted(x for x in xs if x0 + tol < x < x1 - tol), tol)
+    iny = _cluster(sorted(y for y in ys if y0 + tol < y < y1 - tol), tol)
+    return inx, iny
+
+
+def _fcf_raster_bands(ink, rect, cfg):
+    try:
+        import numpy as np
+    except Exception:
+        return None
+    a = np.asarray(ink)
+    if a.ndim == 3:
+        a = a.mean(axis=2)
+    if a.ndim != 2 or a.size == 0:
+        return None
+    dark = a < (a.max() * 0.5 if a.max() else 0.5)
+    hgt, wid = dark.shape
+    x0, y0, x1, y1 = rect
+    gap = max(1, int(cfg.get("vision_fcf_proj_gap", 2)))
+    col = dark.sum(axis=0).astype(float)
+    row = dark.sum(axis=1).astype(float)
+    frac = float(cfg.get("vision_fcf_divider_min", 0.6))
+    xs = _profile_lines(col, hgt * frac, gap)
+    ys = _profile_lines(row, wid * frac, gap)
+    sx = (x1 - x0) / max(wid, 1)
+    sy = (y1 - y0) / max(hgt, 1)
+    inx = [x0 + c * sx for c in xs if 1 < c < wid - 1]
+    iny = [y0 + r * sy for r in ys if 1 < r < hgt - 1]
+    return inx, iny
+
+
+def _profile_lines(prof, thresh, gap):
+    idx = [i for i, v in enumerate(prof) if v >= thresh]
+    if not idx:
+        return []
+    runs = [[idx[0]]]
+    for i in idx[1:]:
+        if i - runs[-1][-1] <= gap:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    return [sum(r) / len(r) for r in runs]
+
+
+def _cluster(vals, tol):
+    out = []
+    for v in vals:
+        if out and v - out[-1][-1] <= tol:
+            out[-1].append(v)
+        else:
+            out.append([v])
+    return [sum(r) / len(r) for r in out]
+
+
+def _bands_from_dividers(x0, x1, xs):
+    edges = [x0] + list(xs) + [x1]
+    return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+
+def segment_fcf_cells(page, rect, cfg, crop=None):
+    cfg = cfg or {}
+    x0, y0, x1, y1 = rect
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    bands = None
+    try:
+        bands = _fcf_vector_bands(page, rect, cfg)
+    except Exception:
+        bands = None
+    if bands is not None and not bands[0]:
+        bands = None
+    if bands is None:
+        ink = crop
+        if ink is None:
+            try:
+                from . import vision
+                pm = vision._pixmap_clip(page, cfg, rect,
+                                         cfg.get("vision_fcf_dpi", 600))
+            except Exception:
+                pm = None
+            if pm is None:
+                return None
+            ink = pm[0]
+        try:
+            bands = _fcf_raster_bands(ink, rect, cfg)
+        except Exception:
+            return None
+    if bands is None:
+        return None
+    xs, mids = bands
+    cells = _bands_from_dividers(x0, x1, sorted(xs))
+    if len(cells) < 2:
+        return None
+    if mids:
+        my = sorted(mids)[len(mids) // 2]
+        rows = [(y0, my), (my, y1)]
+    else:
+        rows = [(y0, y1)]
+    return {"cells": cells, "rows": rows}
+
+
 def merge_fit(lines):
-    """Lone ISO 286 fit code joins the adjacent value."""
     from .scanlib import _fit_ok
     used = set()
     for i, L in enumerate(lines):
@@ -494,7 +606,7 @@ def merge_fit(lines):
             tm = _ltext(M)
             if not _re.search(r"(?:^|\s)\u00d8?\s*\d+(?:[.,]\d+)?\s*$",
                               tm):
-                continue                      # must end in a number
+                continue
             rm = _lrect(M)
             vgap = max(rm[1] - rl[3], rl[1] - rm[3], 0.0)
             if vgap > 1.5 * h:
@@ -513,7 +625,6 @@ def merge_fit(lines):
 
 
 def merge_nx(lines):
-    """Lone '4X' joins the adjacent value line."""
     used = set()
     for i, L in enumerate(lines):
         if i in used or not _NX_LINE.match(_ltext(L)):
@@ -545,8 +656,6 @@ def merge_nx(lines):
     return [l for i, l in enumerate(lines) if i not in used]
 
 
-# Matching.
-
 def _line_string(line):
     parts = []
     cmap = []
@@ -566,14 +675,15 @@ def _year_like(s):
     return _re.match(r"^(19|20)\d\d$", s) is not None
 
 
-def parse_lines(lines, include_bare=False):
-    """Run SCAN_PATS per line; hit owns its tokens' union rect."""
+def parse_lines(lines, include_bare=False, cfg=None):
     out = []
     for cg, line in enumerate(lines):
         s, cmap = _line_string(line)
         spans = []
         claimed = set()
         for tp, sb, pat, ex in SCAN_PATS:
+            if not mode_admits_tp(tp, cfg):
+                continue
             for m in _re.finditer(pat, s, _re.I):
                 res = ex(m)
                 if res is None:
@@ -611,7 +721,6 @@ def parse_lines(lines, include_bare=False):
 
 
 def dedup_hits(hits, tol=8.0):
-    """Drop near-identical hits within ``tol`` points."""
     out, meta = [], []
     for h in hits:
         r = h.get("rect")
@@ -633,8 +742,7 @@ def dedup_hits(hits, tol=8.0):
     return out
 
 
-def scan_words(words, include_bare=False):
-    """Word tuples -> positioned hits. [] when no text layer."""
+def scan_words(words, include_bare=False, cfg=None):
     if not words:
         return []
     lines = lines_from_words(words)
@@ -647,15 +755,12 @@ def scan_words(words, include_bare=False):
     lines = merge_callout_block(lines)
     lines = merge_fit(lines)
     lines = merge_nx(lines)
-    return dedup_hits(parse_lines(lines, include_bare=include_bare))
+    return dedup_hits(parse_lines(lines, include_bare=include_bare, cfg=cfg))
 
 
-def scan_page_positions(page):
-    """Convenience wrapper for a fitz page (rotation-corrected)."""
-    return scan_words(page_words(page))
+def scan_page_positions(page, cfg=None):
+    return scan_words(page_words(page), cfg=cfg)
 
-
-# Validation CLI: python -m bubbler.scanpos drawing.pdf
 
 def _main(argv):
     import fitz

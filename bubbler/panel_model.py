@@ -8,6 +8,7 @@ from PySide6.QtCore import (Qt, QAbstractTableModel, QModelIndex,
 from PySide6.QtGui import QColor
 
 from .common import tol_text, out_of_tol
+from .i18n import tr
 
 PANEL_COLS = [("bubble", "#", 45), ("feature", "feature/cecha", 130),
               ("nominal", "nominal", 70), ("tol", "tol", 90),
@@ -17,15 +18,14 @@ PANEL_COLS = [("bubble", "#", 45), ("feature", "feature/cecha", 130),
               ("measured", "measured/pomiar", 90)]
 INLINE_COLS = ("measured", "tier", "gage")
 
-SORT_ROLE = Qt.UserRole + 1      # per-cell sort key
-LEDGER_ROLE = Qt.UserRole + 2    # row -> ledger index
+SORT_ROLE = Qt.UserRole + 1
+LEDGER_ROLE = Qt.UserRole + 2
 
 _OOT_COLOR = QColor("#c00000")
 _NEG = float("-inf")
 
 
 def bubble_sortkey(bub):
-    """Numeric sort key for a bubble label."""
     from .common import base_of
     b = str(bub)
     base = base_of(b)
@@ -38,7 +38,6 @@ def bubble_sortkey(bub):
 
 
 def cell_text(d, key):
-    """Display string for one ledger row + column key."""
     if key == "nominal":
         return "" if d.get("nominal") is None else "%.2f" % d["nominal"]
     if key == "tol":
@@ -50,11 +49,13 @@ def cell_text(d, key):
         return "" if m in (None, "") else str(m)
     if key == "bubble":
         return str(d.get("bubble", ""))
-    return d.get(key, "") or ""
+    val = d.get(key, "") or ""
+    if key in ("type", "group"):
+        return tr(val)
+    return val
 
 
 def _sort_value(d, key):
-    """Numeric sort key, else None for display-text fallback."""
     if key == "bubble":
         return bubble_sortkey(d.get("bubble", "0"))
     if key == "nominal":
@@ -105,14 +106,11 @@ class BubbleTableModel(QAbstractTableModel):
         return None
 
     def refresh(self):
-        """Full reset."""
         self.beginResetModel()
         self.endResetModel()
 
 
 class BubbleFilterProxy(QSortFilterProxyModel):
-    """Sort by SORT_ROLE numeric-then-text, filter visible cells."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSortRole(SORT_ROLE)

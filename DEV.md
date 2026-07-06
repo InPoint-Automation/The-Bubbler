@@ -30,7 +30,6 @@ python Bubbler.py
     macOS   -> bin/Bubbler.app
 
 ### Dependencies
-- 
 - Linux: `sudo apt-get install python3.12-dev patchelf binutils clang`. build.py defaults to clang, GCC likes to OOM
 - Windows: python.org 3.12 with the `py` launcher + MSVC Build Tools (Desktop C++).
 - macOS: clang from Xcode command-line tools.

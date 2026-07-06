@@ -34,7 +34,6 @@ FLASH_MS = 150
 
 
 class HotbarAction(object):
-    """One hotbar entry. `command` runs on click and on keypress."""
 
     def __init__(self, name, key, label, command, enabled=True):
         self.name = name
@@ -45,11 +44,10 @@ class HotbarAction(object):
 
 
 class HotbarCell(QWidget):
-    """Key badge + label; hover, flash, disabled dimming."""
 
     def __init__(self, on_click):
         super().__init__()
-        self.setAttribute(Qt.WA_StyledBackground, True)  # paint styled bg
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._on_click = on_click
         self._action = None
         self._flashing = False
@@ -121,7 +119,6 @@ class HotbarCell(QWidget):
 
 
 class Hotbar(QFrame):
-    """The pill of keyed action cells."""
 
     def __init__(self, parent, on_action, on_hide):
         super().__init__(parent)

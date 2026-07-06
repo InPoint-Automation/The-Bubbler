@@ -1,18 +1,16 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# PaddleOCR-VL block reader. Path-B alt to Florence-2.
+# PaddleOCR-VL block reader.
 import os
 
 
 def model_dir(cfg, model_root=None):
-    """Local model dir override, else paddleocr's own cache."""
     p = (cfg or {}).get("vision_paddlevl_model")
     return p if (p and os.path.isdir(p)) else None
 
 
 def can_load(cfg, model_root=None):
-    """Cheap probe, no model load. Needs paddle + paddleocr."""
     try:
         import importlib.util as u
         return u.find_spec("paddle") is not None \
@@ -22,7 +20,6 @@ def can_load(cfg, model_root=None):
 
 
 class PaddleOCRVL:
-    """Lazily-loaded PaddleOCR-VL reader."""
 
     def __init__(self, pipeline, np):
         self._p = pipeline
@@ -46,10 +43,9 @@ class PaddleOCRVL:
         return cls(pipe, np)
 
     def read_regions(self, img_rgb):
-        """OCR one crop -> [(box_points, text, conf)], crop pixel coords."""
         if img_rgb.shape[0] < 2 or img_rgb.shape[1] < 2:
             return []
-        bgr = img_rgb[:, :, ::-1]                       # BGR
+        bgr = img_rgb[:, :, ::-1]
         try:
             results = self._p.predict(bgr)
         except Exception:
@@ -62,7 +58,7 @@ class PaddleOCRVL:
             try:
                 out.extend(_rows_from_result(res))
             except Exception:
-                continue                             # schema drift
+                continue
         return out
 
     def warmup(self):
@@ -78,13 +74,12 @@ class PaddleOCRVL:
 
 def _is_scalar(v):
     try:
-        return float(v) == float(v)          # scalars pass, arrays raise
+        return float(v) == float(v)
     except (TypeError, ValueError):
         return False
 
 
 def _to_points(box):
-    """[x0,y0,x1,y1] or [[x,y]*N] -> corner points, or None."""
     if box is None:
         return None
     try:
@@ -99,7 +94,7 @@ def _to_points(box):
 
 
 def _first(*vals):
-    """First non-None. Avoids numpy truthiness of `a or b`."""
+    # avoids numpy truthiness of `a or b`
     for v in vals:
         if v is not None:
             return v
@@ -107,7 +102,6 @@ def _first(*vals):
 
 
 def _rows_from_result(res):
-    """Normalise one PaddleOCR-VL result to [(box_points, text, conf)]."""
     d = getattr(res, "json", None)
     if isinstance(d, dict):
         d = d.get("res", d)

@@ -10,6 +10,24 @@ from PySide6.QtWidgets import QGraphicsView, QLineEdit
 BUTTON_LEFT = Qt.MouseButton.LeftButton
 
 
+def fill_keyed(combo, keys, current=None):
+    from .i18n import tr
+    combo.clear()
+    for k in keys:
+        combo.addItem(tr(k), k)
+    if current is not None:
+        set_combo_key(combo, current)
+
+
+def combo_key(combo):
+    return combo.currentData()
+
+
+def set_combo_key(combo, key):
+    i = combo.findData(key)
+    combo.setCurrentIndex(i if i >= 0 else 0)
+
+
 class PdfView(QGraphicsView):
     """Page pixmap + balloon overlay. Forwards input to app."""
 
@@ -45,7 +63,6 @@ class PdfView(QGraphicsView):
             elif mods & Qt.ControlModifier:
                 self.app.on_ctrl_click(sp)
             else:
-                # Alt skips prediction
                 self.app.on_press(sp, e.position(),
                                   predict=not bool(mods & Qt.AltModifier))
             return
@@ -138,4 +155,11 @@ class MeasureEdit(QLineEdit):
         if k == Qt.Key_Escape:
             self.app._set_measure(False)
             return
+        if not self.text().strip():
+            if k in (Qt.Key_G, Qt.Key_Plus):
+                self.app._measure_quick("GO")
+                return
+            if k in (Qt.Key_N, Qt.Key_Minus):
+                self.app._measure_quick("NOGO")
+                return
         super().keyPressEvent(e)

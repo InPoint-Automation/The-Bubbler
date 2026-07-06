@@ -1,10 +1,10 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
-#
 # Page geometry: circles, line-ends, obstacles, snap, balloon placement.
 
 from .common import RADIUS
 from .scanpos import page_words, xform_pt, xform_rect
+from .i18n import tr
 
 
 class GeometryMixin:
@@ -204,5 +204,5 @@ class GeometryMixin:
         if best is None:
             return x, y
         if not quiet:
-            self.set_status("snapped %s / przyciągnięto" % best[3])
+            self.set_status(tr('snapped %s') % best[3])
         return best[1], best[2]

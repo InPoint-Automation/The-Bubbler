@@ -4,24 +4,23 @@
 # Main window. Canvas, balloons, panel, scan, export.
 
 import os
-import sys
-import json
-import re
-import math
 
 import fitz
-from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, QEvent
+from PySide6.QtCore import Qt, QTimer, QPointF, QRectF
 from PySide6.QtGui import (QImage, QPixmap, QPainter, QPen, QBrush, QColor,
-                           QFont, QKeySequence, QShortcut)
+                           QFont, QKeySequence, QShortcut, QPolygonF)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QGraphicsScene, QLabel, QComboBox, QLineEdit,
                                QDoubleSpinBox, QHBoxLayout, QDockWidget, QMenu,
-                               QMessageBox, QInputDialog, QPushButton)
+                               QMessageBox, QInputDialog, QPushButton,
+                               QCheckBox)
 
 from .common import (APP_NAME, RADIUS, FONTSZ, RED, LEADER_EXITS,
                      TYPES, GROUPS, TIERS, GROUP_OF,
-                     base_of, tol_text, limits_of, out_of_tol)
-from .config import load_cfg, save_cfg, CFG_DEFAULT
+                     base_of, qc_path,
+                     tier_rgb, tier_shape, bubble_shape_points, tier_for_type,
+                     measure_state)
+from .config import load_cfg, save_cfg, units_of
 from .scanlib import expand_hole_row, suggest_gage, GAGES, dp_of_value
 from .sheet import SheetWriter
 from .icons import make_pixmap, set_ui_scale, set_accent
@@ -32,34 +31,34 @@ from .measure_mixin import MeasureMixin
 from .geometry_mixin import GeometryMixin
 from .history_mixin import HistoryMixin
 from .panel_mixin import PanelMixin
-from .widgets import PdfView, MeasureEdit
-from .scanreview import ScanReview
-from .theme import OFFICE, apply_office_theme
+from .widgets import PdfView, MeasureEdit, set_combo_key
 from .settings_mixin import SettingsMixin
 from .ribbon_mixin import RibbonMixin
+from .report_mixin import ReportMixin
+from .import_mixin import ImportMixin
 from .export_mixin import ExportMixin
 from .scan_mixin import ScanMixin
 from .capture_mixin import CaptureMixin
 from .input_mixin import InputMixin
 from .bubble_mixin import BubbleMixin
+from .titleblock_mixin import TitleblockMixin
+from .nav_mixin import NavMixin
+from .corrections_mixin import CorrectionsMixin
 from .store import BubbleStore
 from .viewport import Viewport
 from .tools import make_tools
 
-# Keybinding help in keyhelp.py, canvas widgets in widgets.py.
-
 
 class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
-                 SettingsMixin, RibbonMixin, ExportMixin, ScanMixin,
-                 CaptureMixin, InputMixin, BubbleMixin, HotbarMixin,
-                 QMainWindow):
-    # bubble-panel column spec lives in panel_model.py
+                 SettingsMixin, RibbonMixin, ReportMixin, ImportMixin,
+                 ExportMixin, ScanMixin, CaptureMixin, InputMixin,
+                 BubbleMixin, TitleblockMixin, NavMixin, CorrectionsMixin,
+                 HotbarMixin, QMainWindow):
     UNDO_DEPTH = 50
     _DIRS = (("n", 0, -1), ("e", 1, 0), ("s", 0, 1), ("w", -1, 0))
     _OFF_LABEL = {"auto": "auto", "n": "↑ N", "e": "→ E",
                   "s": "↓ S", "w": "← W"}
 
-    # ledger + uid counter proxies onto self.store.
     @property
     def ledger(self):
         return self.store.ledger
@@ -76,7 +75,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     def uid_seq(self, v):
         self.store.uid_seq = v
 
-    # view state proxies onto self.viewport.
     @property
     def page_i(self):
         return self.viewport.page_i
@@ -110,18 +108,20 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.cfg = cfg or load_cfg()
         set_lang(self.cfg.get("language", "en"))
         self.pdf_path = pdf_path
-        self.writer = SheetWriter(xlsx_path)
+        self.writer = SheetWriter(xlsx_path,
+                                  sheet_lang=self.cfg.get("sheet_lang", "both"))
         self.doc = fitz.open(pdf_path)
         self.viewport = Viewport()
         self.store = BubbleStore()
         self.measure_mode = False
         self.tool = "add"
-        self._tools = make_tools(self)    # name -> canvas tool strategy
+        self._tools = make_tools(self)
         self.sel = set()
         self._qbar = None
         self._undo = []
         self._redo = []
-        self.session_path = os.path.splitext(pdf_path)[0] + "_bubbles.json"
+        self.session_path = qc_path(pdf_path, "_bubbles.json",
+                                    subdir=self.cfg.get("qc_subdir", "qc"))
         self._load_session()
         self.store.migrate_uids()
         self.store.renumber()
@@ -131,21 +131,22 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._capturing = False
         self._capture_start = None
         self._capture_cur = None
-        self._scan_task = None    # None when idle
-        self._cap_loop = None     # nested capture-read loop
-        self._swallow = False    # eat ButtonRelease after modifier-click
+        self._scan_task = None
+        self._cap_loop = None
+        self._swallow = False
         self._drag = None
         self._dragged = False
         self._press = None
         self._press_scene = None
         self._marquee = None
-        self._scanhl = None      # (page, rect) for hover highlight
-        self._flash_ring = None  # (page, bx, by)
-        # scan region: include then exclude box
-        self._scan_region_mode = None   # None | "include" | "exclude"
+        self._scanhl = None
+        self._flash_ring = None
+        self._scan_region_mode = None
         self._scan_inc = None
         self._scan_exc = None
-        self._scan_drag = None          # in-progress rect
+        self._scan_drag = None
+        self._correct_mode = None
+        self._corr_seq = 0
         self.panel_visible = False
 
         self._title_base = "%s - %s" % (
@@ -164,24 +165,29 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                                   GROUPS[0]),
             "tier": self.cfg.get("default_tier", ""),
             "iso_on": bool(self.cfg.get("rib_iso_on")),
-            "tsym": "", "tmax": "", "tmin": "", "pin": "",
+            "tsym": "", "tmax": "", "tmin": "",
             "icls": str(self.cfg.get("default_iso_class", "m")),
         }
 
-        # unscaled base. ui_scale re-derives
         self._base_font = QFont(QApplication.instance().font())
         self._apply_ui_scale()
 
         self._build_ribbon()
         self._build_panel()
-        # store mutations refresh the panel
+        self._build_nav()
         self.store.subscribe(self.refresh_panel)
         self._build_measure_bar()
         self.statusBar()
-        # persistent state. toasts use timed showMessage
         self._status_state = QLabel("")
         self.statusBar().addPermanentWidget(self._status_state, 1)
-        # Toast level icon (warn / check).
+        self._busy_lbl = QLabel("")
+        self._busy_lbl.setVisible(False)
+        self.statusBar().addPermanentWidget(self._busy_lbl)
+        self._busy_msg = ""
+        self._busy_i = 0
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setInterval(120)
+        self._busy_timer.timeout.connect(self._busy_tick)
         self._toast_icon = QLabel("")
         self._toast_icon.setVisible(False)
         self.statusBar().addPermanentWidget(self._toast_icon)
@@ -189,7 +195,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._walk = []
         self._walk_idx = 0
         self._install_shortcuts()
-        retranslate(self)       # apply EN/PL to the chrome just built
+        retranslate(self)
+        self._prewarm_vision()
 
         self.resize(1500, 950)
         self.showMaximized()
@@ -198,35 +205,44 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         QTimer.singleShot(150, self.fit)
         if self.cfg.get("hotbar_on", True):
             QTimer.singleShot(350, lambda: self._qbar_show(persist=False))
+        QTimer.singleShot(500, self._titleblock_autofill)
 
-    # Shortcuts
     def _install_shortcuts(self):
         def sc(seq, fn):
             s = QShortcut(QKeySequence(seq), self)
             s.activated.connect(fn)
             return s
-        # Ctrl combos are safe globally.
         sc("Ctrl+Z", self.undo)
         sc("Ctrl+Y", self.redo)
         sc("Ctrl+Shift+Z", self.redo)
         sc("Ctrl+S", self.save)
         sc("F1", self.show_keys)
-        # nav keys handled in on_key
+        sc("Ctrl+=", lambda: self.rezoom(1.25))
+        sc("Ctrl++", lambda: self.rezoom(1.25))
+        sc("Ctrl+-", lambda: self.rezoom(0.8))
+        sc("Ctrl+0", self.fit)
+        sc("PageUp", lambda: self.flip(-1))
+        sc("PageDown", lambda: self.flip(1))
 
     def on_key(self, e):
         """View-level keys (canvas focus). Returns True when handled."""
         k = e.key()
         txt = e.text()
+        if self._correct_mode:
+            if k == Qt.Key_Escape:
+                self._correct_mode = None
+                self._scan_drag = None
+                self.redraw_overlay()
+                self.set_status(tr('correction cancelled'))
+            return True
         if self._scan_region_mode:
-            # Esc cancels, Enter advances, rest swallowed
             if k == Qt.Key_Escape:
                 self._cancel_scan_region()
             elif k in (Qt.Key_Return, Qt.Key_Enter):
                 if self._scan_region_mode == "include":
                     self._scan_region_mode = "exclude"
-                    self.set_status(
-                        "Scan: drag a RED box to ignore, or Enter to skip / "
-                        "Skanuj: zaznacz CZERWONE pole do pominięcia lub Enter")
+                    self.set_status(tr(
+                        'Scan: drag a RED box to ignore, or Enter to skip'))
                     self.redraw_overlay()
                 else:
                     self._run_scan_regions()
@@ -284,7 +300,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         elif self._qbar is not None:
             self._qbar_hide()
 
-    # UI scale
     def _effective_scale(self):
         """0/auto derives from screen DPI."""
         try:
@@ -300,7 +315,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             return 1.0
 
     def _apply_ui_scale(self, rebuild=False):
-        """Push scale into icon factory and app font."""
         scale = self._effective_scale()
         set_ui_scale(scale)
         set_accent(self.cfg.get("icon_color"))
@@ -322,13 +336,10 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             self.removeToolBar(old)
             old.deleteLater()
         self._build_ribbon()
-        # Restore live toggle state.
         self.btn_tool_add.setChecked(self.tool == "add")
         self.btn_tool_sel.setChecked(self.tool == "select")
         self.btn_panel.setChecked(self.panel_visible)
         self.btn_measure.setChecked(self.measure_mode)
-
-    # ribbon construction lives in RibbonMixin.
 
     def _style_set(self, key, val):
         lo, hi = (3, 40) if key == "radius" else (4, 30)
@@ -337,8 +348,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.render()
 
     def _iso_changed(self, on):
-        self.last["iso_on"] = bool(on)
-        self.cfg["rib_iso_on"] = self.last["iso_on"]
+        on = bool(on)
+        if units_of(self.cfg) == "asme_inch":
+            self.cfg["dp_on"] = on
+        else:
+            self.last["iso_on"] = on
+            self.cfg["rib_iso_on"] = on
         save_cfg(self.cfg)
         self._qbar_refresh()
 
@@ -373,22 +388,19 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.last[key] = val
         if group:
             self.last["group"] = GROUP_OF.get(val, self.last.get("group", ""))
-            self.cb_group.setCurrentText(self.last["group"])
-        # Persist type/tier across restart.
+            set_combo_key(self.cb_group, self.last["group"])
         if key in ("type", "tier"):
             self.cfg["default_%s" % key] = val
             save_cfg(self.cfg)
 
     def _rib_sync(self):
-        self.cb_type.setCurrentText(self.last.get("type", TYPES[0]))
-        self.cb_group.setCurrentText(self.last.get("group", GROUPS[0]))
+        set_combo_key(self.cb_type, self.last.get("type", TYPES[0]))
+        set_combo_key(self.cb_group, self.last.get("group", GROUPS[0]))
         self.e_tsym.setText(self.last.get("tsym", ""))
         self.e_tmax.setText(self.last.get("tmax", ""))
         self.e_tmin.setText(self.last.get("tmin", ""))
         self.cb_icls.setCurrentText(self.last.get("icls", "m"))
         self.cb_tier.setCurrentText(self.last.get("tier", ""))
-
-    # panel / table logic lives in PanelMixin.
 
     def _cell_edit(self, idx, colname):
         d = self.ledger[idx]
@@ -435,7 +447,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.snapshot()
         new = dlg.result_rows[0]
         keep = {k: d.get(k) for k in ("bubble", "uid", "page", "x", "y",
-                                      "sheet_row", "measured", "bx",
+                                      "sheet_row", "measured", "ops", "bx",
                                       "by", "lexit") if k in d}
         d.clear()
         d.update(new)
@@ -459,20 +471,64 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.refresh_panel()
         self.render()
 
-    # Session
+    _SPINNER = "|/-\\"
+
+    def _busy_tick(self):
+        self._busy_i = (self._busy_i + 1) % len(self._SPINNER)
+        self._busy_lbl.setText("%s %s" % (self._SPINNER[self._busy_i],
+                                          self._busy_msg))
+
+    def set_busy(self, msg):
+        """Show the animated status-bar spinner with `msg` (already tr'd)."""
+        if getattr(self, "_busy_lbl", None) is None:
+            return
+        self._busy_msg = msg
+        self._busy_lbl.setVisible(True)
+        if not self._busy_timer.isActive():
+            self._busy_timer.start()
+        self._busy_tick()
+
+    def clear_busy(self):
+        if getattr(self, "_busy_lbl", None) is None:
+            return
+        self._busy_timer.stop()
+        self._busy_lbl.setVisible(False)
+        self._busy_lbl.setText("")
+
+    def _prewarm_vision(self):
+        if not self.cfg.get("vision_assist"):
+            return
+        try:
+            from PySide6.QtCore import QThreadPool
+            from . import vision, scanworker
+            vision.clear_cache()
+            self.set_busy(tr('Warming reader'))
+            task = scanworker.PrewarmTask(dict(self.cfg))
+            task.signals.done.connect(self.clear_busy)
+            QThreadPool.globalInstance().start(task)
+        except Exception:
+            self.clear_busy()
+
     def _load_session(self):
         self.store.load_session(self.session_path)
 
     def _save_session(self):
         try:
+            d = os.path.dirname(self.session_path)
+            if d and not os.path.isdir(d):
+                try:
+                    os.makedirs(d, exist_ok=True)
+                except PermissionError:
+                    self.session_path = qc_path(self.pdf_path,
+                                                "_bubbles.json", subdir="")
+                    self.set_status("qc/ not writable; saving beside PDF")
             self.store.save_session(self.session_path)
         except Exception as e:
-            # warn once per failure streak
             if not getattr(self, "_session_save_failed", False):
                 self._session_save_failed = True
                 try:
                     QMessageBox.warning(
-                        self, "Session not saved / Nie zapisano sesji",
+                        self, tr('Session not saved'),
                         "Could not write\n%s\n\n%s\n\nYour bubbles are NOT "
                         "being saved to disk. Check free space, permissions, "
                         "or whether the file is locked - Bubbler retries on "
@@ -481,16 +537,15 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 except Exception:
                     pass
             try:
-                self.set_status("session NOT saved / NIE zapisano sesji",
+                self.set_status(tr('session NOT saved'),
                                 icon="warn")
             except Exception:
                 pass
             return
         if getattr(self, "_session_save_failed", False):
             self._session_save_failed = False
-            self.set_status("session saving again / sesja znów zapisywana")
+            self.set_status(tr('session saving again'))
 
-    # Geometry helpers
     def page_bubbles(self, page_i=None):
         if page_i is None:
             page_i = self.page_i
@@ -512,8 +567,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                     d["bx"], d["by"] = bx, by
                 if ax is not None:
                     d["x"], d["y"] = ax, ay
-
-    # page geometry / snapping / auto-offset live in GeometryMixin.
 
     def _apply_general_tol(self, rw, h, gtols):
         if rw.get("tol_sym") is not None or rw.get("tol_max") is not None \
@@ -541,14 +594,11 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             rw["tol_sym"] = float(t)
         return rw
 
-    # Coordinate transforms
     def _scr(self, px, py):
-        """Page point -> scene point (pixmap pixel space)."""
         x, y = self.viewport.page_to_scene(px, py)
         return QPointF(x, y)
 
     def _page_xy(self, sp):
-        """Scene point -> page (x, y). None if off-page."""
         px, py = self.viewport.scene_to_page(sp.x(), sp.y())
         r = self.doc[self.page_i].rect
         if 0 <= px <= r.width and 0 <= py <= r.height:
@@ -571,25 +621,26 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 return b
         return None
 
-    # View
     def set_status(self, extra="", icon=None):
         extra = tr(extra)
-        mm = "  [%s]" % tr("MEASURE MODE / TRYB POMIARU") \
+        mm = "  [%s]" % tr('MEASURE MODE') \
             if self.measure_mode else ""
         ncrit = sum(1 for d in self.ledger if d.get("tier") == "red")
         ncmm = sum(1 for d in self.ledger if d.get("gage") == "CMM")
-        state = (" Page %d/%d   next here #%d   zoom %d%%   bubbles here: %d  "
-                 " rows: %d (crit %d, CMM %d)   unsaved: %d%s"
-                 % (self.page_i + 1, self.doc.page_count,
+        state = (tr(" Page %d/%d   next here #%d   zoom %d%%   bubbles here:"
+                    " %d   rows: %d (crit %d, CMM %d)   unsaved: %d") + "%s"
+                 ) % (self.page_i + 1, self.doc.page_count,
                     self.store.next_number(self.page_i),
                     int(self.zoom * 100), len(self.page_bubbles()),
-                    len(self.ledger), ncrit, ncmm, self.unsaved(), mm))
+                    len(self.ledger), ncrit, ncmm, self.unsaved(), mm)
         if getattr(self, "_status_state", None) is not None:
             self._status_state.setText(state)
         else:
             self.statusBar().showMessage(state)
+        lp = getattr(self, "lbl_page", None)
+        if lp is not None:
+            lp.setText("%d/%d" % (self.page_i + 1, self.doc.page_count))
         self._update_title()
-        # timed so later set_status() leaves it
         if extra:
             self._set_toast_icon(icon)
             self.statusBar().showMessage(extra, 6000)
@@ -607,7 +658,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             lab.setVisible(False)
 
     def _on_toast_changed(self, text):
-        # toast cleared -> drop the level icon.
         if not text:
             self._set_toast_icon(None)
 
@@ -666,24 +716,52 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.view.viewport().update()
         self.set_status()
 
+    _STATE_RING = {
+        "none": ("#999999", 2),
+        "in": ("#1f9e3c", 2),
+        "out": ("#d01919", 4),
+        "go": ("#0a9e8c", 2),
+        "nogo": ("#e08a1e", 4),
+    }
+
+    def _state_ring(self, state):
+        spec = self._STATE_RING.get(state)
+        if spec is None:
+            return None, 0
+        return QColor(spec[0]), spec[1]
+
+    @staticmethod
+    def _draw_bubble_shape(painter, cx, cy, rad, shape):
+        """Balloon body by tier: circle / square / triangle / diamond / star."""
+        pts = bubble_shape_points(shape, cx, cy, rad)
+        if pts is None:
+            painter.drawEllipse(QPointF(cx, cy), rad, rad)
+        else:
+            painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+
     def paint_overlay(self, painter):
-        """Paint balloons/leaders/marquee/highlights in scene coords."""
         painter.setRenderHint(QPainter.Antialiasing, True)
         rad = float(self.cfg.get("radius", RADIUS)) * self.zoom
         fsz = float(self.cfg.get("fontsz", FONTSZ))
         LEXIT = LEADER_EXITS
         sel_bases = self._sel_bases() if self.sel else set()
-        red = QColor(217, 25, 25)
         blue = QColor("#2266ff")
+        red = QColor.fromRgbF(*RED)
 
         scr = self.viewport.page_to_scene
+        rowmap = {}
+        for d in self.ledger:
+            if d.get("page") == self.page_i:
+                rowmap.setdefault(base_of(d["bubble"]), d)
 
         font = QFont("Arial")
         font.setPixelSize(max(8, int(fsz * self.zoom * 0.8)))
         painter.setFont(font)
         for num, ax, ay, bx, by in self.page_bubbles():
             cx, cy = scr(bx, by)
-            col = blue if num in sel_bases else red
+            row = rowmap.get(num, {})
+            col = QColor.fromRgbF(*tier_rgb(row.get("tier")))
+            shape = tier_shape(row.get("tier"), self.cfg)
             if (bx, by) != (ax, ay) and self._leader_of(num):
                 ahx, ahy = scr(ax, ay)
                 ex = LEXIT.get(self._lexit_of(num))
@@ -700,13 +778,22 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 painter.setBrush(QBrush(col))
                 painter.setPen(Qt.NoPen)
                 painter.drawEllipse(QPointF(ahx, ahy), 3, 3)
+            if self.measure_mode:
+                sc, sw = self._state_ring(measure_state(row))
+                if sc is not None:
+                    painter.setPen(QPen(sc, sw))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawEllipse(QPointF(cx, cy), rad + 3, rad + 3)
             painter.setPen(QPen(col, 2))
             painter.setBrush(QBrush(QColor("white")))
-            painter.drawEllipse(QPointF(cx, cy), rad, rad)
+            self._draw_bubble_shape(painter, cx, cy, rad, shape)
+            if num in sel_bases:
+                painter.setPen(QPen(blue, 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(QPointF(cx, cy), rad + 2, rad + 2)
             painter.setPen(QPen(col))
             painter.drawText(QRectF(cx - rad, cy - rad, 2 * rad, 2 * rad),
                              Qt.AlignCenter, str(num))
-        # measure ring
         if self.measure_mode and self._walk and \
                 self._walk_idx < len(self._walk) and \
                 self._walk[self._walk_idx] < len(self.ledger):
@@ -718,14 +805,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 painter.setPen(QPen(blue, 3))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(QPointF(cx, cy), rr, rr)
-        # flash ring (panel select)
         if self._flash_ring and self._flash_ring[0] == self.page_i:
             _, bx, by = self._flash_ring
             cx, cy = scr(bx, by)
             painter.setPen(QPen(blue, 3))
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(QPointF(cx, cy), rad + 5, rad + 5)
-        # scan hover highlight
         if self._scanhl and self._scanhl[0] == self.page_i:
             rc = self._scanhl[1]
             p0 = scr(rc[0], rc[1])
@@ -735,7 +820,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             painter.drawRect(QRectF(min(p0[0], p1[0]) - 3, min(p0[1], p1[1]) - 3,
                                     abs(p1[0] - p0[0]) + 6,
                                     abs(p1[1] - p0[1]) + 6))
-        # marquee
         if self._marquee is not None:
             x0, y0, x1, y1 = self._marquee
             pen = QPen(blue, 1, Qt.DashLine)
@@ -743,7 +827,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(min(x0, x1), min(y0, y1),
                                     abs(x1 - x0), abs(y1 - y0)))
-        # capture rect
         if self._capturing and self._capture_start is not None and \
                 self._capture_cur is not None:
             x0, y0 = self._capture_start
@@ -752,8 +835,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(min(x0, x1), min(y0, y1),
                                     abs(x1 - x0), abs(y1 - y0)))
-        # green include, red exclude
-        if self._scan_region_mode or self._scan_inc or self._scan_exc:
+        if (self._scan_region_mode or self._scan_inc or self._scan_exc
+                or self._correct_mode):
             green = QColor(34, 170, 34)
 
             def region_box(r, color):
@@ -769,14 +852,15 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             if self._scan_exc is not None:
                 region_box(self._scan_exc, red)
             if self._scan_drag is not None:
-                region_box(self._scan_drag,
-                           green if self._scan_region_mode == "include" else red)
+                if self._correct_mode:
+                    region_box(self._scan_drag, QColor(30, 110, 230))
+                else:
+                    region_box(self._scan_drag,
+                               green if self._scan_region_mode == "include"
+                               else red)
 
     def flip(self, d):
-        n = self.page_i + d
-        if 0 <= n < self.doc.page_count:
-            self.page_i = n
-            self.render()
+        self.goto_page(self.page_i + d)
 
     def rezoom(self, f):
         self.zoom = max(0.3, min(8.0, self.zoom * f))
@@ -786,9 +870,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.rotation = (self.rotation + 90) % 360
         self.render()
 
-    # pointer interaction lives in InputMixin.
-
-    # Tools
     def set_tool(self, name):
         self.tool = name
         if name != "select":
@@ -825,16 +906,14 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     def _kbd_delete(self):
         if self._entry_focused() or self.measure_mode:
             return
-        # Selected bubble deletes regardless of active tool.
         if self.sel:
             self.delete_selection()
 
-    # Right-click: context menu else pan
     def on_right_press(self, sp, gpos):
         p = self._page_xy(sp)
         hit = self.hit_bubble(*p) if p else None
         if hit is None:
-            return False     # let the view pan
+            return False
         rows = [(i, d) for i, d in enumerate(self.ledger)
                 if base_of(d["bubble"]) == hit and
                 d.get("page") == self.page_i]
@@ -843,22 +922,26 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         m = QMenu(self)
         if len(rows) == 1:
             i0 = rows[0][0]
-            m.addAction("Edit #%s / Edytuj" % rows[0][1]["bubble"],
+            m.addAction(tr('Edit #%s') % rows[0][1]["bubble"],
                         lambda i=i0: self.edit_ledger_row(i))
         else:
-            em = m.addMenu("Edit sub-row / Edytuj podwiersz")
+            em = m.addMenu(tr('Edit sub-row'))
             for i, d in rows:
                 em.addAction("#%s  %s" % (d["bubble"], d.get("feature", "")),
                              lambda i=i: self.edit_ledger_row(i))
-        m.addAction("Add sub-row / Dodaj podwiersz",
+        m.addAction(tr('Add sub-row'),
                     lambda: self.add_sub_row(hit))
         if len(rows) > 1:
-            dm = m.addMenu("Delete sub-row / Usuń podwiersz")
+            dm = m.addMenu(tr('Delete sub-row'))
             for i, d in rows:
                 dm.addAction("#%s  %s" % (d["bubble"], d.get("feature", "")),
                              lambda i=i: self.delete_sub_row(i))
+        if self.cfg.get("collect_corrections"):
+            d0 = rows[0][1]
+            m.addAction(tr('Report misread...'),
+                        lambda d=d0: self.report_misread(d))
         m.addSeparator()
-        m.addAction("Delete bubble / Usuń bąbel",
+        m.addAction(tr('Delete bubble'),
                     lambda: self._delete_bases([hit]))
         m.exec(gpos.toPoint())
         return True
@@ -881,6 +964,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         for k, d in enumerate(dlg.result_rows):
             if not d.get("gage"):
                 d["gage"] = self.suggest(d)
+            d["tier"] = tier_for_type(d.get("type"), self.cfg,
+                                      d.get("tier", ""))
             d.update({"uid": ref["uid"], "page": ref.get("page", 0),
                       "x": ref["x"], "y": ref["y"],
                       "bx": ref.get("bx", ref["x"]),
@@ -895,7 +980,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         d = self.ledger[idx]
         if QMessageBox.question(
                 self, "Delete / Usuń",
-                "Delete sub-row #%s (%s)? / Usunąć podwiersz?"
+                tr('Delete sub-row #%s (%s)?')
                 % (d["bubble"], d.get("feature", ""))) != QMessageBox.Yes:
             return
         self.snapshot()
@@ -911,7 +996,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.refresh_panel()
         self.render()
 
-    # Align / distribute
     def _sel_first_rows(self):
         out = []
         seen = set()
@@ -925,7 +1009,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     def align_sel(self, axis):
         rows = self._sel_first_rows()
         if len(rows) < 2:
-            self.set_status("select 2+ bubbles / zaznacz 2+")
+            self.set_status(tr('select 2+ bubbles'))
             return
         self.snapshot()
         if axis == "h":
@@ -946,7 +1030,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     def distribute_sel(self, axis):
         rows = self._sel_first_rows()
         if len(rows) < 3:
-            self.set_status("select 3+ bubbles / zaznacz 3+")
+            self.set_status(tr('select 3+ bubbles'))
             return
         key = (lambda d: d.get("bx", d["x"])) if axis == "h" \
             else (lambda d: d.get("by", d["y"]))
@@ -990,13 +1074,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 return d.get("lexit")
         return None
 
-    # hotbar + ribbon-value cyclers live in HotbarMixin.
-
-    # click->bubble create/select/delete lives in BubbleMixin.
-
-    # undo / redo live in HistoryMixin.
-
-    # Measure walk
     def _build_measure_bar(self):
         BG = "#fff7e0"
         self.mbar = QWidget()
@@ -1004,37 +1081,52 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         lay = QHBoxLayout(self.mbar)
         lay.setContentsMargins(8, 4, 8, 4)
         self.mcount = QLabel("")
-        self.mcount.setStyleSheet("color:#888; font-size:9pt;")
+        self.mcount.setStyleSheet("color:#5a5a5a; font-size:9pt;")
         self.mlab = QLabel("")
         self.mlab.setStyleSheet("font-weight:bold; font-size:10pt;")
         self.ment = MeasureEdit(self)
         self.ment.setMaximumWidth(140)
         self._mbar_sync = False
+        op_lbl = QLabel(tr('op:'))
+        op_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
+        self.mop_cb = QComboBox()
+        self.mop_cb.addItems(self.cfg.get("ops_list") or ["op1"])
+        self.mop_cb.setMaximumWidth(80)
+        self._measure_op = self.mop_cb.currentText() or "op1"
+        self.mop_cb.currentTextChanged.connect(self._mop_changed)
+        self.mskip_cb = QCheckBox(tr('skip filled'))
+        self.mskip_cb.setChecked(bool(self.cfg.get("measure_skip_filled",
+                                                   True)))
+        self.mskip_cb.setStyleSheet("font-size:8pt;")
+        self.mskip_cb.toggled.connect(self._mskip_toggled)
         b_go = QPushButton("GO")
         b_go.setMaximumWidth(54)
-        b_go.setToolTip("Record GO + next / zapisz GO")
+        b_go.setToolTip(tr('Record GO + next'))
         b_go.clicked.connect(lambda: self._measure_quick("GO"))
         b_nogo = QPushButton("NOGO")
         b_nogo.setMaximumWidth(60)
-        b_nogo.setToolTip("Record NOGO + next / zapisz NOGO")
+        b_nogo.setToolTip(tr('Record NOGO + next'))
         b_nogo.clicked.connect(lambda: self._measure_quick("NOGO"))
-        gage_lbl = QLabel("gage / przyrząd:")
-        gage_lbl.setStyleSheet("color:#888; font-size:8pt;")
+        gage_lbl = QLabel(tr('gage'))
+        gage_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
         self.mgage_cb = QComboBox()
         self.mgage_cb.setEditable(True)
         self.mgage_cb.addItems(GAGES)
         self.mgage_cb.setMinimumWidth(140)
         self.mgage_cb.currentTextChanged.connect(self._mgage_changed)
-        help_lbl = QLabel("Enter=save+next - Shift+Enter=back - Tab=skip - "
-                          "click bubble=jump - Esc=exit")
-        help_lbl.setStyleSheet("color:#999; font-size:8pt;")
+        help_lbl = QLabel(tr('Enter=save+next  G/+=GO  N/-=NOGO  '
+                             'Shift+Enter=back  Tab=skip  Esc=exit'))
+        help_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
         lay.addWidget(self.mcount)
         lay.addWidget(self.mlab)
+        lay.addWidget(op_lbl)
+        lay.addWidget(self.mop_cb)
         lay.addWidget(self.ment)
         lay.addWidget(b_go)
         lay.addWidget(b_nogo)
         lay.addWidget(gage_lbl)
         lay.addWidget(self.mgage_cb)
+        lay.addWidget(self.mskip_cb)
         lay.addStretch(1)
         lay.addWidget(help_lbl)
         self._mbar_dock = QDockWidget("", self)
@@ -1043,12 +1135,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._mbar_dock.setWidget(self.mbar)
         self.addDockWidget(Qt.BottomDockWidgetArea, self._mbar_dock)
         self._mbar_dock.hide()
-
-    # measure-walk logic lives in MeasureMixin.
-
-    # save() lives in ExportMixin.
-
-    # click / drag capture lives in CaptureMixin.
 
     def _balloon_from_rows(self, rows, x, y, rect=None):
         if not rows:
@@ -1060,12 +1146,13 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         uid = self.store.new_uid()
         n = 0
         for d in rows:
-            # holes expand to Ø + X/Y rows
             for rr in expand_hole_row(d, self.cfg):
                 if not rr.get("gage"):
                     rr["gage"] = self.suggest(rr)
                 rr.setdefault("bubble", "?")
                 rr.setdefault("leader", self.use_leaders())
+                rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
+                                           rr.get("tier", ""))
                 rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
                            "bx": bx, "by": by, "sheet_row": None})
                 self.ledger.append(rr)
@@ -1074,14 +1161,4 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._save_session()
         self.refresh_panel()
         self.render()
-        self.set_status("ballooned %d rows / %d podwierszy" % (n, n))
-
-    # show_keys / header_editor / settings live in SettingsMixin.
-
-    # scan dispatch lives in ScanMixin.
-
-
-# scan-review dialog in scanreview.py, MS-Office theme in theme.py.
-
-
-# App entry + drawing picker live in launcher.py.
+        self.set_status(tr('ballooned %d rows') % n)

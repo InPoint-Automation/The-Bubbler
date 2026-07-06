@@ -2,89 +2,163 @@
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
 # Constants, category model, tolerance helpers.
+import math
+import os
+import re
 
 APP_NAME = "Bubbler"
 ORG = "InPoint Automation Sp. z o.o."
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 RADIUS = 9.0
 FONTSZ = 10.0
 RED = (0.85, 0.1, 0.1)
 WHITE = (1, 1, 1)
 
-# Leader exit side -> unit step.
+TIER_RGB = {
+    "": RED,
+    "red": RED,
+    "blue": (0.13, 0.4, 1.0),
+    "green": (0.13, 0.55, 0.24),
+}
+TIER_SHAPE = {"red": "circle", "blue": "square", "green": "triangle"}
+SHAPES = ["circle", "square", "triangle", "diamond", "star"]
+
+
+def tier_rgb(tier):
+    return TIER_RGB.get(tier or "", RED)
+
+
+def tier_for_type(type_, cfg, fallback=""):
+    if fallback:
+        return fallback
+    if cfg and cfg.get("type_tier_auto"):
+        t = (cfg.get("type_tier_map") or {}).get(type_)
+        if t in TIERS:
+            return t
+    return fallback
+
+
+def tier_shape(tier, cfg=None):
+    if cfg is not None:
+        if not cfg.get("tier_shapes", True):
+            return "circle"
+        s = (cfg.get("tier_shape_map") or {}).get(tier or "")
+        if s in SHAPES:
+            return s
+    return TIER_SHAPE.get(tier or "", "circle")
+
+
+def bubble_shape_points(shape, cx, cy, rad):
+    if shape == "square":
+        return [(cx - rad, cy - rad), (cx + rad, cy - rad),
+                (cx + rad, cy + rad), (cx - rad, cy + rad)]
+    if shape == "triangle":
+        r = rad * 1.15
+        return [(cx, cy - r), (cx - r * 0.87, cy + r * 0.5),
+                (cx + r * 0.87, cy + r * 0.5)]
+    if shape == "diamond":
+        r = rad * 1.28
+        return [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
+    if shape == "star":
+        pts, ro, ri = [], rad * 1.35, rad * 0.55
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rr = ro if i % 2 == 0 else ri
+            pts.append((cx + rr * math.cos(ang), cy + rr * math.sin(ang)))
+        return pts
+    return None
+
 LEADER_EXITS = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0)}
 SHEET = "Inspection"
 FIRST_ROW = 11
 LAST_ROW = 310
 
-TYPES = ["dim", "hole / otwór", "thread / gwint", "thru / przelot",
-         "slot / rowek", "depth / głębokość", "position / pozycja",
-         "GD&T", "finish / wykończenie"]
-GROUPS = ["LWH", "positions / pozycje", "holes Ø / otwory",
-          "threads / gwinty", "GD&T", "finish / wykończenie", "other / inne"]
+TYPES = ["dim", "hole", "thread", "thru", "slot", "depth", "position",
+         "GD&T", "finish"]
+GROUPS = ["LWH", "positions", "holes Ø", "threads", "GD&T", "finish", "other"]
 TIERS = ["", "red", "blue", "green"]
 GROUP_OF = {
     "dim": "LWH",
-    "hole / otwór": "holes Ø / otwory",
-    "thread / gwint": "threads / gwinty",
-    "thru / przelot": "holes Ø / otwory",
-    "slot / rowek": "positions / pozycje",
-    "depth / głębokość": "LWH",
-    "position / pozycja": "positions / pozycje",
+    "hole": "holes Ø",
+    "thread": "threads",
+    "thru": "holes Ø",
+    "slot": "positions",
+    "depth": "LWH",
+    "position": "positions",
     "GD&T": "GD&T",
-    "finish / wykończenie": "finish / wykończenie",
+    "finish": "finish",
 }
 
-# Category model: region class -> resolution, preset, tokens.
-
-# Structural kind = what one click yields.
-KIND_ATOMIC = "atomic"        # region = 1 measurement        -> one bubble
-KIND_STACKED = "stacked"      # region = feature + sub-feats   -> one bubble + sub-rows
-KIND_CONTAINER = "container"  # region = N callouts            -> resolve unit under cursor
-KIND_META = "meta"            # not a measurement              -> sets defaults, no bubble
+KIND_ATOMIC = "atomic"
+KIND_STACKED = "stacked"
+KIND_CONTAINER = "container"
+KIND_META = "meta"
 KINDS = (KIND_ATOMIC, KIND_STACKED, KIND_CONTAINER, KIND_META)
 
-# tokens each category admits
 ADMIT = {
     "linear": {"Ø", "R"},
     "hole": {"Ø", "R", "DEEP", "CBORE", "CSINK"},
     "gdt": {"Ø", "⌖", "▱", "◯", "⌭", "⟂", "∥", "∠", "◎", "⌒", "⌓", "⌰", "↗"},
     "finish": {"Ra"},
-    "datum": set(),           # boxed letter only
-    None: None,               # meta: reader not run
+    "datum": set(),
+    None: None,
 }
 
-# class -> (kind, preset, constraint)
 CATEGORY = {
-    "dim_tol":               (KIND_ATOMIC,    "dim",                  "linear"),
-    "hole_note":             (KIND_STACKED,   "hole / otwór",         "hole"),
-    "hole_table":            (KIND_CONTAINER, "hole / otwór",         "hole"),
-    "surface_finish":        (KIND_ATOMIC,    "finish / wykończenie", "finish"),
-    "feature_control_frame": (KIND_CONTAINER, "GD&T",                 "gdt"),
-    "datum_feature":         (KIND_ATOMIC,    "GD&T",                 "datum"),
-    "gentol_block":          (KIND_META,      None,                   None),
-    "note":                  (KIND_META,      None,                   None),
+    "dim_tol":               (KIND_ATOMIC,    "dim",     "linear"),
+    "hole_note":             (KIND_STACKED,   "hole",    "hole"),
+    "hole_table":            (KIND_CONTAINER, "hole",    "hole"),
+    "surface_finish":        (KIND_ATOMIC,    "finish",  "finish"),
+    "feature_control_frame": (KIND_CONTAINER, "GD&T",    "gdt"),
+    "datum_feature":         (KIND_ATOMIC,    "GD&T",    "datum"),
+    "gentol_block":          (KIND_META,      None,      None),
+    "note":                  (KIND_META,      None,      None),
 }
+
+
+SIMPLE_TPS = frozenset({"LINEAR", "DIAMETER", "RADIUS", "ANGLE", "DEPTH",
+                        "GDT", "FIT"})
+SIMPLE_REGION_CLASSES = frozenset({"dim_tol", "feature_control_frame",
+                                   "datum_feature"})
+
+
+def is_simple(cfg):
+    return bool(cfg) and cfg.get("mode") == "simple"
+
+
+def mode_admits_tp(tp, cfg):
+    return not is_simple(cfg) or tp in SIMPLE_TPS
+
+
+def mode_admits_region(cls, cfg):
+    return not is_simple(cfg) or cls in SIMPLE_REGION_CLASSES
 
 
 def admits(constraint, token):
-    """True if this constraint may emit `token`. Stripped compare."""
     allow = ADMIT.get(constraint)
     if not allow:
         return False
     return token.strip() in allow
 
 
+_FRAC_RE = re.compile(r"^(?:(?P<w>\d+)[-\s]+)?(?P<n>\d+)/(?P<d>\d+)$")
+
+
 def fnum(s):
     s = (s or "").strip().replace(",", ".")
     if s == "":
         return None
+    m = _FRAC_RE.match(s)
+    if m:
+        den = float(m.group("d"))
+        if den == 0:
+            raise ValueError("zero denominator")
+        return float(m.group("w") or 0) + float(m.group("n")) / den
     return float(s)
 
 
 def dp_of(val):
-    """Decimal places of a nominal. Strings keep literal intent."""
     if val is None:
         return None
     if isinstance(val, str):
@@ -97,14 +171,18 @@ def dp_of(val):
 
 
 def dp_tol(val, cfg):
-    """Tolerance by decimal places (title-block style). ± or None."""
     if not cfg or not cfg.get("dp_on"):
         return None
     d = dp_of(val)
     if d is None:
         return None
-    tols = cfg.get("dp_tols") or {}
-    t = tols.get(str(min(d, 3)))
+    if cfg.get("units") == "asme_inch":
+        tols = cfg.get("dp_tols_inch") or {}
+        cap = 4                          # inch reaches .XXXX
+    else:
+        tols = cfg.get("dp_tols") or {}
+        cap = 3                          # mm clamps at 3
+    t = tols.get(str(min(d, cap)))
     try:
         t = float(t)
     except (TypeError, ValueError):
@@ -115,6 +193,21 @@ def dp_tol(val, cfg):
 def base_of(bubble):
     b = str(bubble)
     return int(b.rstrip("abcdefghijklmnopqrstuvwxyz") or 0)
+
+
+def qc_path(pdf_path, suffix, subdir="qc", legacy=True):
+    """Output path for a drawing sidecar. `qc/` subdir, sibling if legacy exists.
+
+    Pure path math (one isfile probe). Caller creates the dir lazily.
+    """
+    base = os.path.splitext(pdf_path)[0]
+    sibling = base + suffix
+    if not subdir:
+        return sibling
+    if legacy and os.path.isfile(sibling):
+        return sibling
+    name = os.path.basename(base) + suffix
+    return os.path.join(os.path.dirname(pdf_path), subdir, name)
 
 
 def tol_text(d):
@@ -143,11 +236,41 @@ def limits_of(d):
     return (nom + min(tmax, tmin), nom + max(tmax, tmin))
 
 
+def latest_op(ops):
+    """(name, record) of the op with the newest ts, or None. ISO ts sorts."""
+    if not ops:
+        return None
+    items = sorted(ops.items(), key=lambda kv: str(kv[1].get("ts") or ""))
+    return items[-1]
+
+
+def mirror_measured(d):
+    ops = d.get("ops")
+    if not ops:
+        return d.get("measured")
+    best = latest_op(ops)
+    d["measured"] = best[1].get("measured") if best else None
+    return d["measured"]
+
+
 _NOGO_WORDS = ("NOGO", "NO-GO", "NO GO", "NOK", "FAIL", "NIE")
+_GO_WORDS = ("GO", "OK", "TAK", "PASS")
+
+
+def measure_state(d):
+    """Row inspection state: none | in | out | go | nogo."""
+    m = d.get("measured")
+    if m in (None, ""):
+        return "none"
+    s = str(m).strip().upper()
+    if s in _GO_WORDS:
+        return "go"
+    if s in _NOGO_WORDS:
+        return "nogo"
+    return "out" if out_of_tol(d) else "in"
 
 
 def out_of_tol(d):
-    """True when measured value violates the row's limits."""
     m = d.get("measured")
     if m in (None, ""):
         return False
@@ -160,3 +283,34 @@ def out_of_tol(d):
     if lim is None:
         return False
     return not (lim[0] - 1e-9 <= v <= lim[1] + 1e-9)
+
+
+def oot_rows(ledger, cfg=None):
+    """Ordered out-of-tol rows (measured OOT or NOGO) as flat report dicts."""
+    rows = []
+    for d in ledger:
+        st = measure_state(d)
+        if not (out_of_tol(d) or st == "nogo"):
+            continue
+        op = latest_op(d.get("ops"))
+        rows.append({
+            "bubble": d.get("bubble", ""),
+            "base": base_of(d.get("bubble", "")),
+            "page": d.get("page"),
+            "nominal": d.get("nominal"),
+            "tol": tol_text(d),
+            "measured": d.get("measured"),
+            "op": op[0] if op else "",
+            "gage": (op[1].get("gage") if op else None) or d.get("gage") or "",
+            "tier": d.get("tier", ""),
+            "state": st,
+        })
+    rows.sort(key=lambda r: (base_of(r["bubble"]), str(r["bubble"])))
+    return rows
+
+
+def oot_summary(ledger, cfg=None):
+    """{rows, n_oot, n_critical}. Critical = red-tier OOT (matches status bar)."""
+    rows = oot_rows(ledger, cfg)
+    n_crit = sum(1 for r in rows if r.get("tier") == "red")
+    return {"rows": rows, "n_oot": len(rows), "n_critical": n_crit}

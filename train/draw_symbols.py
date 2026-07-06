@@ -25,10 +25,10 @@ def diameter(d, x0, y0, x1, y1, w, fill):          # Ø
 def radius(d, x0, y0, x1, y1, w, fill):            # R
     h = y1 - y0
     midx = (x0 + x1) / 2
-    d.line((x0, y0, x0, y1), fill=fill, width=w)               # stem
+    d.line((x0, y0, x0, y1), fill=fill, width=w)
     d.arc((x0, y0, x1, y0 + h * 0.55), 270, 90, fill=fill, width=w)
     d.line((x0, y0 + h * 0.55, x1 - w, y0 + h * 0.55), fill=fill, width=w)
-    d.line((midx, y0 + h * 0.55, x1, y1), fill=fill, width=w)  # leg
+    d.line((midx, y0 + h * 0.55, x1, y1), fill=fill, width=w)
 
 
 def position(d, x0, y0, x1, y1, w, fill):          # ⌖
@@ -89,7 +89,6 @@ def profile_surface(d, x0, y0, x1, y1, w, fill):   # ⌓
 
 
 def _arrow(d, x0, y0, x1, y1, w, fill, n):
-    """n stacked slanted arrows."""
     step = (x1 - x0) / (n + 1)
     for k in range(n):
         ax = x0 + step * (k + 1)
@@ -108,7 +107,7 @@ def runout_total(d, x0, y0, x1, y1, w, fill):      # ⌰
     _arrow(d, x0, y0, x1, y1, w, fill, 2)
 
 
-def surface_roughness(d, x0, y0, x1, y1, w, fill):  # √  texture tick
+def surface_roughness(d, x0, y0, x1, y1, w, fill):  # √
     vx = x0 + (x1 - x0) * 0.32
     d.line((x0, y1 - (y1 - y0) * 0.4, vx, y1), fill=fill, width=w)
     d.line((vx, y1, x1, y0), fill=fill, width=w)
@@ -117,9 +116,9 @@ def surface_roughness(d, x0, y0, x1, y1, w, fill):  # √  texture tick
 def depth(d, x0, y0, x1, y1, w, fill):             # ↧
     cx = (x0 + x1) / 2
     ah = (x1 - x0) * 0.22
-    d.line((x0, y0, x1, y0), fill=fill, width=w)    # top stroke
-    d.line((cx, y0, cx, y1), fill=fill, width=w)    # shaft
-    d.line((cx, y1, cx - ah, y1 - ah), fill=fill, width=w)   # arrowhead
+    d.line((x0, y0, x1, y0), fill=fill, width=w)
+    d.line((cx, y0, cx, y1), fill=fill, width=w)
+    d.line((cx, y1, cx - ah, y1 - ah), fill=fill, width=w)
     d.line((cx, y1, cx + ah, y1 - ah), fill=fill, width=w)
 
 

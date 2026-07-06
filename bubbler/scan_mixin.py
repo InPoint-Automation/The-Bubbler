@@ -15,7 +15,6 @@ from .i18n import tr
 
 class ScanMixin:
     def scan_page(self, all_pages=False):
-        # all-pages skips region boxes
         if all_pages:
             self._run_scan(all_pages=True)
             return
@@ -26,7 +25,7 @@ class ScanMixin:
         self._scan_exc = None
         self._scan_drag = None
         QMessageBox.information(
-            self, tr("Scan / Skanuj"),
+            self, tr('Scan'),
             tr("Drag a GREEN box around the area to scan, then a RED box "
                "around any print detail to ignore. Enter skips a box, Esc "
                "cancels. / Przeciągnij ZIELONE pole wokół obszaru do "
@@ -45,7 +44,7 @@ class ScanMixin:
         rect = (x0, y0, sp.x(), sp.y())
         self._scan_drag = None
         if abs(rect[2] - rect[0]) < 5 or abs(rect[3] - rect[1]) < 5:
-            self.redraw_overlay()    # click, not box
+            self.redraw_overlay()
             return
         if self._scan_region_mode == "include":
             self._scan_inc = rect
@@ -62,7 +61,7 @@ class ScanMixin:
         self._scan_region_mode = None
         self._scan_inc = self._scan_exc = self._scan_drag = None
         self.redraw_overlay()
-        self.set_status("scan cancelled / anulowano skanowanie")
+        self.set_status(tr('scan cancelled'))
 
     def _scene_to_pdf(self, x, y):
         return self.viewport.scene_to_page(x, y)
@@ -77,14 +76,14 @@ class ScanMixin:
         exc = self._scene_rect_to_pdf(self._scan_exc) if self._scan_exc else None
         self._scan_region_mode = None
         self._scan_inc = self._scan_exc = self._scan_drag = None
-        self.redraw_overlay()    # clear highlights pre-dialog
+        self.redraw_overlay()
         self._run_scan(all_pages=False, inc=inc, exc=exc)
 
     @staticmethod
     def _hit_in_region(h, inc, exc):
         rc = h.get("rect")
         if not rc:
-            return inc is None    # no position info
+            return inc is None
         cx = (rc[0] + rc[2]) / 2.0
         cy = (rc[1] + rc[3]) / 2.0
         if inc is not None and not (inc[0] <= cx <= inc[2]
@@ -96,16 +95,15 @@ class ScanMixin:
         return True
 
     def _run_scan(self, all_pages=False, inc=None, exc=None):
-        # one scan at a time
         if getattr(self, "_scan_task", None) is not None:
             return
         pages = (list(range(self.doc.page_count)) if all_pages else [self.page_i])
         self._scan_ctx = (inc, exc, all_pages)
         self._scan_cancel = False
         dlg = QProgressDialog(
-            tr("Scanning... / Skanowanie..."), tr("Cancel / Anuluj"),
+            tr('Scanning...'), tr('Cancel'),
             0, len(pages), self)
-        dlg.setWindowTitle(tr("Scan / Skanuj"))
+        dlg.setWindowTitle(tr('Scan'))
         dlg.setWindowModality(Qt.ApplicationModal)
         dlg.setMinimumDuration(0)
         dlg.setValue(0)
@@ -120,7 +118,6 @@ class ScanMixin:
         QThreadPool.globalInstance().start(task)
 
     def _cancel_scan(self):
-        # worker polls between pages
         self._scan_cancel = True
 
     def _teardown_scan(self):
@@ -137,34 +134,33 @@ class ScanMixin:
 
     def _on_scan_failed(self, msg):
         self._teardown_scan()
-        QMessageBox.warning(self, "Scan / Skanuj",
-                            "Scan failed / Skan nieudany:\n%s" % msg)
+        QMessageBox.warning(self, tr('Scan'),
+                            tr('Scan failed: %s') % msg)
 
     def _on_scan_done(self, result):
         self._teardown_scan()
-        if result is None:    # cancelled
-            self.set_status("scan cancelled / anulowano skanowanie")
+        if result is None:
+            self.set_status(tr('scan cancelled'))
             return
-        # warm word cache so accept skips re-run
         if result.get("vwords"):
             self.__dict__.setdefault("_vword_cache", {}).update(result["vwords"])
         inc, exc, all_pages = self._scan_ctx
         found = result["found"]
         gtols = result["gtols"]
         if not result["any_text"]:
-            QMessageBox.information(self, "Scan / Skanuj",
-                                    "No text layer / Brak warstwy tekstu.")
+            QMessageBox.information(self, tr('Scan'),
+                                    tr('No text layer'))
             return
         if not found:
-            QMessageBox.information(self, "Scan / Skanuj",
-                                    "No callouts recognized / Nie rozpoznano.")
+            QMessageBox.information(self, tr('Scan'),
+                                    tr('No callouts recognized'))
             return
         if inc is not None or exc is not None:
             found = [(pg, h) for (pg, h) in found
                      if self._hit_in_region(h, inc, exc)]
             if not found:
                 QMessageBox.information(
-                    self, "Scan / Skanuj",
+                    self, tr('Scan'),
                     "No callouts in the selected area / "
                     "Brak elementów w zaznaczonym obszarze.")
                 return

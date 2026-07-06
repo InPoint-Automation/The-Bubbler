@@ -5,11 +5,9 @@
 
 import re as _re
 
-# Band upper bounds, mm
-BANDS = (3, 6, 10, 18, 30, 50, 80, 120, 180, 250, 315, 400, 500)
+BANDS = (3, 6, 10, 18, 30, 50, 80, 120, 180, 250, 315, 400, 500)  # mm
 
-# IT grades, µm, per band
-IT = {
+IT = {  # µm
     4:  (3, 4, 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 20),
     5:  (4, 5, 6, 8, 9, 11, 13, 15, 18, 20, 23, 25, 27),
     6:  (6, 8, 9, 11, 13, 16, 19, 22, 25, 29, 32, 36, 40),
@@ -22,8 +20,7 @@ IT = {
          630),
 }
 
-# shaft upper deviations es (µm, <= 0), grade-independent
-SHAFT_ES = {
+SHAFT_ES = {  # µm
     "d": (-20, -30, -40, -50, -65, -80, -100, -120, -145, -170, -190,
           -210, -230),
     "e": (-14, -20, -25, -32, -40, -50, -60, -72, -85, -100, -110,
@@ -34,15 +31,13 @@ SHAFT_ES = {
     "h": (0,) * 13,
 }
 
-# shaft lower deviations ei (µm, >= 0), grade-independent
-SHAFT_EI = {
+SHAFT_EI = {  # µm
     "k": (0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5),
     "m": (2, 4, 6, 7, 8, 9, 11, 13, 15, 17, 20, 21, 23),
     "n": (4, 8, 10, 12, 15, 17, 20, 23, 27, 31, 34, 37, 40),
     "p": (6, 12, 15, 18, 22, 26, 32, 37, 43, 50, 56, 62, 68),
 }
 
-# r, s finer sub-bands: (upper_bound, ei)
 SHAFT_EI_SPLIT = {
     "r": ((3, 10), (6, 15), (10, 19), (18, 23), (30, 28), (50, 34),
           (65, 41), (80, 43), (100, 51), (120, 54), (140, 63),
@@ -69,7 +64,7 @@ def band_index(D):
 
 
 def it_value(D, grade):
-    """Standard tolerance ITn in µm, or None outside the tables."""
+    """Standard tolerance ITn in µm, or None past table."""
     bi = band_index(D)
     row = IT.get(grade)
     if bi is None or row is None:
@@ -124,7 +119,7 @@ def fit_limits(D, code):
         h = t / 2.0
         return (round(h / 1000.0, 4), round(-h / 1000.0, 4))
 
-    if letter.islower():                      # shaft
+    if letter.islower():
         if letter in SHAFT_ES:
             es = SHAFT_ES[letter][bi]
             ei = es - t
@@ -135,7 +130,6 @@ def fit_limits(D, code):
             es = ei + t
         return (round(es / 1000.0, 4), round(ei / 1000.0, 4))
 
-    # hole
     L = letter
     if L in ("D", "E", "F", "G", "H"):
         EI = -SHAFT_ES[L.lower()][bi]
@@ -153,7 +147,7 @@ def fit_limits(D, code):
         elif L == "N":
             ES = 0
         else:
-            return None                       # K/M above grade 8
+            return None
         EI = ES - t
     elif L in ("P", "R", "S"):
         ei = _shaft_ei(L.lower(), D, grade)
@@ -173,5 +167,5 @@ def fit_limits(D, code):
 
 
 def is_fit_code(s):
-    """True when `s` looks like a single supported ISO 286 class."""
+    """True if s is a supported ISO 286 class."""
     return bool(_FITCODE.match(str(s or "").strip()))

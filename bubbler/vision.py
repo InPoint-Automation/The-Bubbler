@@ -4,9 +4,11 @@
 # Lazy vision assist. Vector-stroke symbols + OCR fallback.
 
 import re
+import threading
 
-# Synthetic block ids above any real one.
 _VBLOCK = 900000
+
+_SESS_LOCK = threading.Lock()  # prewarm thread races the scan pool
 
 
 def augment_words(page, words, cfg):
@@ -16,19 +18,19 @@ def augment_words(page, words, cfg):
         return words
     out = list(words)
     try:
-        out = _geometry_symbols(page, out, cfg)        # Tier 0: vector Ø/R
+        out = _geometry_symbols(page, out, cfg)
     except Exception as e:                              # pragma: no cover
         _warn("geometry pass failed: %s" % e)
     text_is_sparse = _sparse(out)
     try:
         if cfg.get("vision_ocr", True) and (text_is_sparse or
                                             cfg.get("vision_ocr_always")):
-            out += _ocr_words(page, cfg)               # Tier 1: scanned pages
+            out += _ocr_words(page, cfg)
     except Exception as e:                              # pragma: no cover
         _warn("ocr pass failed: %s" % e)
     try:
         if cfg.get("vision_symbols", True):
-            out = _symbol_words(page, out, cfg)        # Tier 2: GD&T symbols
+            out = _symbol_words(page, out, cfg)
     except Exception as e:                              # pragma: no cover
         _warn("symbol pass failed: %s" % e)
     return out
@@ -56,9 +58,13 @@ def _warn(msg):
     import sys, os
     line = "bubbler.vision: %s" % msg
     print(line, file=sys.stderr)
-    # Mirror to ~/.bubbler.log; GUI builds discard stderr.
     try:
         logp = os.path.join(os.path.expanduser("~"), ".bubbler.log")
+        try:
+            if os.path.getsize(logp) > 256 * 1024:
+                os.replace(logp, logp + ".1")
+        except OSError:
+            pass
         with open(logp, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except Exception:
@@ -88,7 +94,6 @@ def _providers(cfg):
 
 
 def _has_gpu_ep():
-    """GPU provider (DirectML/CUDA) installed?"""
     try:
         import onnxruntime as ort
         avail = set(ort.get_available_providers())
@@ -98,7 +103,6 @@ def _has_gpu_ep():
 
 
 def reset_sessions():
-    """Drop cached sessions so next call rebuilds."""
     global _SYM_SESS, _SYM_TRIED, _RGN_SESS, _RGN_TRIED, _OCR, _OCR_TRIED
     global _PADDLE, _PADDLE_TRIED, _VLM, _VLM_TRIED, _EP_LOGGED
     _SYM_SESS = _RGN_SESS = _OCR = _PADDLE = _VLM = None
@@ -107,7 +111,6 @@ def reset_sessions():
 
 
 def _sparse(words, threshold=4):
-    """Few text tokens -> probably scanned, worth OCR."""
     return sum(1 for w in words if str(w[4]).strip()) < threshold
 
 
@@ -128,7 +131,6 @@ def _scale(cfg):
 
 
 def _pixmap(page, cfg):
-    """Render displayed page -> (np.uint8 HxWx3, scale), or None."""
     fitz = _fitz()
     if fitz is None:
         return None
@@ -147,8 +149,32 @@ def _pixmap(page, cfg):
     return img, s
 
 
+def _pixmap_clip(page, cfg, rect, dpi):
+    fitz = _fitz()
+    if fitz is None:
+        return None
+    try:
+        import numpy as np
+    except Exception:
+        return None
+    if int(getattr(page, "rotation", 0) or 0) % 360:
+        return None
+    x0, y0, x1, y1 = rect
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    s = max(1.0, float(dpi)) / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(s, s),
+                          clip=fitz.Rect(x0, y0, x1, y1), alpha=False)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        pix.height, pix.width, pix.n)
+    if pix.n == 4:
+        img = img[:, :, :3]
+    elif pix.n == 1:
+        img = np.repeat(img, 3, axis=2)
+    return img, s, x0, y0
+
+
 def _rot_matrix(page):
-    """page.rotation_matrix when rotated, else None."""
     try:
         rot = int(getattr(page, "rotation", 0) or 0) % 360
     except (TypeError, ValueError):
@@ -163,10 +189,9 @@ def _xform_rect(m, x0, y0, x1, y1):
 
 def _attach_or_append(out, rect, symbol):
     """Prepend symbol to nearest number right, else append."""
-    from .scanpos import _GLYPHS                        # ⌀/∅/ø -> Ø
+    from .scanpos import _GLYPHS
 
     def _lead(s):
-        """First char, folded through the glyph map."""
         c = s[:1]
         return _GLYPHS.get(c, c)
 
@@ -180,17 +205,16 @@ def _attach_or_append(out, rect, symbol):
             continue
         wy = (w[1] + w[3]) / 2.0
         if abs(wy - cy) > 0.7 * h:
-            continue                                   # different row
+            continue
         gap = w[0] - x1
         if gap < -0.5 * h or gap > 3.0 * h:
-            continue                                   # not just to the right
+            continue
         if best is None or gap < best[0]:
             best = (gap, i)
     if best is not None:
         i = best[1]
         w = out[i]
         wt = str(w[4])
-        # Dup-guard across glyph lookalikes via folded leads.
         dup = wt.startswith(symbol) or (
             len(symbol) == 1 and _lead(wt) == _GLYPHS.get(symbol, symbol))
         if not dup:
@@ -200,8 +224,6 @@ def _attach_or_append(out, rect, symbol):
     n = len(out)
     out.append((x0, y0, x1, y1, symbol, _VBLOCK + n, 0, 0))
 
-
-# Tier 0: geometry
 
 def _geometry_symbols(page, words, cfg):
     """Detect vector Ø/R marks, attach to adjacent number."""
@@ -219,7 +241,6 @@ def _geometry_symbols(page, words, cfg):
         r = p.get("rect")
         if r is None or r.width <= 0 or r.height <= 0:
             continue
-        # diameter glyph: square-ish circle, one slash
         ncurve = sum(1 for it in items if it[0] == "c")
         nline = sum(1 for it in items if it[0] == "l")
         squareish = 0.6 <= (r.width / max(r.height, 1e-6)) <= 1.6
@@ -231,8 +252,6 @@ def _geometry_symbols(page, words, cfg):
             _attach_or_append(out, rc, "Ø")
     return out
 
-
-# Tier 1: OCR
 
 _OCR = None
 _OCR_TRIED = False
@@ -254,7 +273,6 @@ def _ocr_engine():
 
 
 def _ocr_words(page, cfg):
-    """OCR rendered page -> word tuples, one per line."""
     eng = _ocr_engine()
     pm = _pixmap(page, cfg)
     if eng is None or pm is None:
@@ -277,7 +295,6 @@ def _ocr_words(page, cfg):
     return out
 
 
-# Per-block OCR
 _PADDLE = None
 _PADDLE_TRIED = False
 
@@ -309,7 +326,6 @@ def _ocr_engine_for(cfg):
 
 
 def _ocr_read(kind, eng, sub):
-    """OCR an image crop, normalised to [(box4, text, conf)]."""
     if kind == "paddle":
         out = []
         for page in (eng.ocr(sub, cls=True) or []):
@@ -322,7 +338,6 @@ def _ocr_read(kind, eng, sub):
 
 
 def _ocr_block(img, s, rect, kind, eng, conf_min, blk):
-    """OCR one block crop -> word tuples (displayed points)."""
     x0 = max(0, int(rect[0] * s))
     y0 = max(0, int(rect[1] * s))
     x1 = int(rect[2] * s)
@@ -345,13 +360,11 @@ def _ocr_block(img, s, rect, kind, eng, conf_min, blk):
     return out
 
 
-# Optional Florence-2 VLM reader, explicit actions only.
 _VLM = None
 _VLM_TRIED = False
 
 
 def _vlm_module(cfg):
-    """Reader module for cfg['vision_vlm_engine']."""
     if str((cfg or {}).get("vision_vlm_engine", "florence")).lower() \
             == "paddleocr_vl":
         from . import paddlevl
@@ -380,7 +393,6 @@ def _vlm_engine(cfg):
 
 
 def _vlm_read_block(img, s, rect, eng, blk):
-    """VLM-read one block crop -> word tuples (displayed points)."""
     x0 = max(0, int(rect[0] * s))
     y0 = max(0, int(rect[1] * s))
     x1 = int(rect[2] * s)
@@ -397,8 +409,6 @@ def _vlm_read_block(img, s, rect, eng, blk):
                     str(text), blk + n, 0, 0))
     return out
 
-
-# Tier 2: GD&T symbols
 
 _SYM_SESS = None
 _SYM_TRIED = False
@@ -419,7 +429,6 @@ def _model_path(cfg):
     p = cfg.get("vision_model")
     if p and os.path.exists(p):
         return p
-    # __file__-relative, then legacy freezer dir.
     roots = [os.path.dirname(os.path.abspath(__file__))]
     base = getattr(sys, "_MEIPASS", None)
     if base:
@@ -431,32 +440,149 @@ def _model_path(cfg):
     return None
 
 
+def _out_nc(sess):
+    """YOLO class count: output channels - 4. None if shape unreadable/dynamic."""
+    try:
+        shape = sess.get_outputs()[0].shape
+    except Exception:
+        return None
+    if len(shape) == 3 and isinstance(shape[1], int):
+        return shape[1] - 4
+    return None
+
+
 def _symbol_session(cfg):
     """Lazily open ONNX symbol detector. None if runtime/model absent."""
     global _SYM_SESS, _SYM_TRIED, _EP_LOGGED
     if _SYM_TRIED:
         return _SYM_SESS
-    _SYM_TRIED = True
-    path = _model_path(cfg or {})
-    if path is None:
-        _warn("symbol model not found (bundled gdt_symbols.onnx missing); "
-              "symbol pass disabled")
-        return None
+    with _SESS_LOCK:                     # prewarm thread races the scan pool
+        if _SYM_TRIED:
+            return _SYM_SESS
+        path = _model_path(cfg or {})
+        if path is None:
+            _warn("symbol model not found (bundled gdt_symbols.onnx missing); "
+                  "symbol pass disabled")
+            _SYM_TRIED = True
+            return None
+        try:
+            import onnxruntime as ort
+            _SYM_SESS = ort.InferenceSession(path, providers=_providers(cfg))
+            if not _EP_LOGGED:
+                _warn("execution provider: %s"
+                      % ", ".join(_SYM_SESS.get_providers()))
+                _EP_LOGGED = True
+            nc = _out_nc(_SYM_SESS)
+            if nc is None:
+                _warn("could not read symbol model class count; guard skipped")
+            elif nc != len(_SYM_CLASSES):
+                _warn("symbol model class mismatch: model nc=%d, code expects %d "
+                      "(train/classes.txt); reads may misclassify -- retrain/"
+                      "re-export recommended" % (nc, len(_SYM_CLASSES)))
+        except Exception as e:
+            _warn("onnxruntime/model unavailable (%s); symbol pass disabled" % e)
+            _SYM_SESS = None
+        _SYM_TRIED = True
+        return _SYM_SESS
+
+
+_DET_CACHE = {}
+_DET_CACHE_MAX = 64
+_CACHE_LOCK = threading.Lock()
+
+
+def clear_cache():
+    """Drop cached detections (call on document open / settings change)."""
+    with _CACHE_LOCK:
+        _DET_CACHE.clear()
+
+
+def _det_sig(cfg):
+    keys = ("vision_dpi", "vision_imgsz", "vision_tile", "vision_tile_overlap",
+            "vision_merge", "vision_sym_conf", "vision_region_conf",
+            "vision_nms_iou", "vision_model", "vision_region_model",
+            "vision_ep", "vision_symbols", "vision_region")
+    return tuple((cfg or {}).get(k) for k in keys)
+
+
+def _cache_key(page, cfg, tag):
     try:
-        import onnxruntime as ort
-        _SYM_SESS = ort.InferenceSession(path, providers=_providers(cfg))
-        if not _EP_LOGGED:
-            _warn("execution provider: %s" % ", ".join(_SYM_SESS.get_providers()))
-            _EP_LOGGED = True
-    except Exception as e:
-        _warn("onnxruntime/model unavailable (%s); symbol pass disabled" % e)
-        _SYM_SESS = None
-    return _SYM_SESS
+        return (tag, page.parent.name, page.number, _det_sig(cfg))
+    except Exception:
+        return None
 
 
-def _symbol_dets(page, cfg):
-    """-> [(env_rect, token), ...] GD&T symbol detections in displayed points."""
-    sess = _symbol_session(cfg)
+def _cache_get(key):
+    if key is None:
+        return None
+    with _CACHE_LOCK:
+        return _DET_CACHE.get(key)
+
+
+def _cache_put(key, val):
+    if key is None:
+        return
+    with _CACHE_LOCK:
+        if len(_DET_CACHE) >= _DET_CACHE_MAX and key not in _DET_CACHE:
+            _DET_CACHE.clear()
+        _DET_CACHE[key] = val
+
+
+def prewarm(cfg):
+    """Warm ONNX sessions off the first-scan critical path. Never raises."""
+    cfg = cfg or {}
+    if not cfg.get("vision_assist"):
+        return
+    try:
+        import numpy as np
+    except Exception:
+        return
+    blank = np.full((64, 64, 3), 255, np.uint8)
+    imgsz = int(cfg.get("vision_imgsz", 640))
+    for get, nc in ((_symbol_session, len(_SYM_CLASSES)),
+                    (_region_session, len(_REGION_CLASSES))):
+        try:
+            sess = get(cfg)
+            if sess is not None:
+                _run_det(sess, blank, imgsz, nc, 0.99, 0.45, np)
+        except Exception:
+            pass
+
+
+def _tile_grid(w, h, tile, overlap):
+    if w <= tile and h <= tile:
+        return [(0, 0, w, h)]
+    step = max(1, int(round(tile * (1.0 - overlap))))
+
+    def _starts(extent):
+        if extent <= tile:
+            return [0]
+        s = list(range(0, extent - tile + 1, step))
+        if s[-1] != extent - tile:
+            s.append(extent - tile)
+        return s
+
+    xs, ys = _starts(w), _starts(h)
+    return [(x, y, min(x + tile, w), min(y + tile, h))
+            for y in ys for x in xs]
+
+
+def _run_det(sess, img, imgsz, nc, conf, iou, np):
+    blob, pad, ratio = _letterbox(img, imgsz, np)
+    pred = np.asarray(sess.run(None, {sess.get_inputs()[0].name: blob})[0])
+    if pred.ndim == 3:
+        pred = pred[0]
+    if pred.size == 0:
+        return []
+    px, py = pad
+    out = []
+    for x0, y0, x1, y1, c, ci in _nms(_decode(pred, nc, conf, np), iou):
+        out.append(((x0 - px) / ratio, (y0 - py) / ratio,
+                    (x1 - px) / ratio, (y1 - py) / ratio, c, int(ci)))
+    return out
+
+
+def _detect_page(sess, page, cfg, nc, conf, tile):
     pm = _pixmap(page, cfg)
     if sess is None or pm is None:
         return []
@@ -466,30 +592,76 @@ def _symbol_dets(page, cfg):
         return []
     img, s = pm
     imgsz = int(cfg.get("vision_imgsz", 640))
-    blob, pad, ratio = _letterbox(img, imgsz, np)
-    name = sess.get_inputs()[0].name
-    pred = np.asarray(sess.run(None, {name: blob})[0])
-    if pred.ndim == 3:
-        pred = pred[0]
-    if pred.size == 0:
-        return []
-    conf_min = float(cfg.get("vision_sym_conf", 0.35))
-    dets = _nms(_decode(pred, len(_SYM_CLASSES), conf_min, np),
-                float(cfg.get("vision_nms_iou", 0.45)))
-    px, py = pad
+    iou = float(cfg.get("vision_nms_iou", 0.45))
+    h, w = img.shape[:2]
+    use_tile = (tile and cfg.get("vision_tile", True)
+                and max(h, w) > imgsz * 1.5)
+    if not use_tile:
+        dets = _run_det(sess, img, imgsz, nc, conf, iou, np)
+    else:
+        overlap = float(cfg.get("vision_tile_overlap", 0.2))
+        dets = []
+        for tx0, ty0, tx1, ty1 in _tile_grid(w, h, imgsz, overlap):
+            crop = img[ty0:ty1, tx0:tx1]
+            for x0, y0, x1, y1, c, ci in _run_det(sess, crop, imgsz, nc,
+                                                  conf, iou, np):
+                dets.append((x0 + tx0, y0 + ty0, x1 + tx0, y1 + ty0, c, ci))
+        dets = _merge(dets, iou, cfg.get("vision_merge", "wbf"))
+    return [(x0 / s, y0 / s, x1 / s, y1 / s, c, ci)
+            for x0, y0, x1, y1, c, ci in dets]
+
+
+def _symbol_dets(page, cfg):
+    key = _cache_key(page, cfg, "sym")
+    hit = _cache_get(key)
+    if hit is not None:
+        return hit
+    conf = float(cfg.get("vision_sym_conf", 0.35))
     out = []
-    for x0, y0, x1, y1, _conf, ci in dets:
-        if not (0 <= ci < len(_SYM_CLASSES)):
-            continue
-        # undo letterbox -> render pixels -> displayed points
-        env = ((x0 - px) / ratio / s, (y0 - py) / ratio / s,
-               (x1 - px) / ratio / s, (y1 - py) / ratio / s)
-        out.append((env, _SYM_CLASSES[ci]))
+    for x0, y0, x1, y1, _c, ci in _detect_page(
+            _symbol_session(cfg), page, cfg, len(_SYM_CLASSES), conf, tile=True):
+        if 0 <= ci < len(_SYM_CLASSES):
+            out.append(((x0, y0, x1, y1), _SYM_CLASSES[ci]))
+    _cache_put(key, out)
+    return out
+
+
+def _symbol_dets_clip(page, cfg, rect):
+    sess = _symbol_session(cfg)
+    if sess is None:
+        return []
+    try:
+        import numpy as np
+    except Exception:
+        return []
+    pm = _pixmap_clip(page, cfg, rect, cfg.get("vision_fcf_dpi", 600))
+    if pm is None:
+        return []
+    img, s, ox, oy = pm
+    imgsz = int(cfg.get("vision_imgsz", 640))
+    iou = float(cfg.get("vision_nms_iou", 0.45))
+    conf = float(cfg.get("vision_fcf_conf", 0.25))
+    out = []
+    for x0, y0, x1, y1, _c, ci in _run_det(sess, img, imgsz,
+                                           len(_SYM_CLASSES), conf, iou, np):
+        if 0 <= ci < len(_SYM_CLASSES):
+            out.append(((x0 / s + ox, y0 / s + oy,
+                         x1 / s + ox, y1 / s + oy), _SYM_CLASSES[ci]))
+    return out
+
+
+def _dedup_syms(primary, extra, iou_thr=0.4):
+    out = list(primary)
+    for env2, tok2 in extra:
+        b2 = (env2[0], env2[1], env2[2], env2[3], 1.0, 0)
+        if not any(tok1 == tok2 and _iou(
+                (e1[0], e1[1], e1[2], e1[3], 1.0, 0), b2) >= iou_thr
+                for e1, tok1 in out):
+            out.append((env2, tok2))
     return out
 
 
 def _symbol_words(page, words, cfg):
-    """Add GD&T symbol tokens, each attached to its number."""
     out = list(words)
     for env, tok in _symbol_dets(page, cfg):
         _attach_or_append(out, env, tok)
@@ -527,58 +699,52 @@ def _region_session(cfg):
     global _RGN_SESS, _RGN_TRIED, _EP_LOGGED
     if _RGN_TRIED:
         return _RGN_SESS
-    _RGN_TRIED = True
-    path = _region_model_path(cfg or {})
-    if path is None:
-        _warn("region model not found (gdt_regions.onnx); "
-              "block grouping falls back to geometry")
-        return None
-    try:
-        import onnxruntime as ort
-        _RGN_SESS = ort.InferenceSession(path, providers=_providers(cfg))
-        if not _EP_LOGGED:
-            _warn("execution provider: %s" % ", ".join(_RGN_SESS.get_providers()))
-            _EP_LOGGED = True
-    except Exception as e:
-        _warn("region model unavailable (%s); block grouping uses geometry" % e)
-        _RGN_SESS = None
-    return _RGN_SESS
+    with _SESS_LOCK:
+        if _RGN_TRIED:
+            return _RGN_SESS
+        path = _region_model_path(cfg or {})
+        if path is None:
+            _warn("region model not found (gdt_regions.onnx); "
+                  "block grouping falls back to geometry")
+            _RGN_TRIED = True
+            return None
+        try:
+            import onnxruntime as ort
+            _RGN_SESS = ort.InferenceSession(path, providers=_providers(cfg))
+            if not _EP_LOGGED:
+                _warn("execution provider: %s"
+                      % ", ".join(_RGN_SESS.get_providers()))
+                _EP_LOGGED = True
+            nc = _out_nc(_RGN_SESS)
+            if nc is None:
+                _warn("could not read region model class count; guard skipped")
+            elif nc != len(_REGION_CLASSES):
+                _warn("region model class mismatch: model nc=%d, code expects %d; "
+                      "reads may misclassify -- retrain/re-export recommended"
+                      % (nc, len(_REGION_CLASSES)))
+        except Exception as e:
+            _warn("region model unavailable (%s); block grouping uses "
+                  "geometry" % e)
+            _RGN_SESS = None
+        _RGN_TRIED = True
+        return _RGN_SESS
 
 
 def _region_boxes(page, cfg):
-    """-> [(x0, y0, x1, y1, conf, cls)] callout-block rects in displayed points, or []."""
-    sess = _region_session(cfg)
-    pm = _pixmap(page, cfg)
-    if sess is None or pm is None:
-        return []
-    try:
-        import numpy as np
-    except Exception:
-        return []
-    img, s = pm
-    imgsz = int(cfg.get("vision_imgsz", 640))
-    blob, pad, ratio = _letterbox(img, imgsz, np)
-    name = sess.get_inputs()[0].name
-    pred = np.asarray(sess.run(None, {name: blob})[0])
-    if pred.ndim == 3:
-        pred = pred[0]
-    if pred.size == 0:
-        return []
-    conf_min = float(cfg.get("vision_region_conf", 0.35))
-    dets = _nms(_decode(pred, len(_REGION_CLASSES), conf_min, np),
-                float(cfg.get("vision_nms_iou", 0.45)))
-    px, py = pad
+    key = _cache_key(page, cfg, "rgn")
+    hit = _cache_get(key)
+    if hit is not None:
+        return hit
+    conf = float(cfg.get("vision_region_conf", 0.35))
     out = []
-    for x0, y0, x1, y1, conf, ci in dets:
-        if not (0 <= ci < len(_REGION_CLASSES)):
-            continue
-        # undo letterbox -> render pixels -> displayed points
-        out.append(((x0 - px) / ratio / s, (y0 - py) / ratio / s,
-                    (x1 - px) / ratio / s, (y1 - py) / ratio / s, conf, ci))
+    for x0, y0, x1, y1, c, ci in _detect_page(
+            _region_session(cfg), page, cfg, len(_REGION_CLASSES),
+            conf, tile=False):
+        if 0 <= ci < len(_REGION_CLASSES):
+            out.append((x0, y0, x1, y1, c, ci))
+    _cache_put(key, out)
     return out
 
-
-# Path A assembly
 
 def _center_in(word, rect):
     cx = (word[0] + word[2]) / 2.0
@@ -588,6 +754,118 @@ def _center_in(word, rect):
 
 def _rects_overlap(a, b):
     return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+def _fcf_symbol_kw(text):
+    from .scanlib import _GDT_SYMBOLS
+    for glyph, kw in _GDT_SYMBOLS:
+        if glyph in text:
+            return kw.split()
+    return None
+
+
+def _fcf_cell_of(word, cells):
+    cx = (word[0] + word[2]) / 2.0
+    for i, (lo, hi) in enumerate(cells):
+        if lo <= cx <= hi:
+            return i
+    return None
+
+
+def _fcf_row_of(word, rows):
+    cy = (word[1] + word[3]) / 2.0
+    for i, (lo, hi) in enumerate(rows):
+        if lo <= cy <= hi:
+            return i
+    return 0 if cy < rows[0][0] else len(rows) - 1
+
+
+def _fcf_structural_hits(page, cfg, brect, block_words, bi):
+    from bubbler import scanpos
+    seg = None
+    try:
+        seg = scanpos.segment_fcf_cells(page, brect, cfg)
+    except Exception:
+        seg = None
+    if not seg:
+        return []
+    cells, rows = seg["cells"], seg["rows"]
+    if len(cells) < 2:
+        return []
+    joined = " ".join(str(w[4]) for w in block_words)
+    sym = _fcf_symbol_kw(joined)
+    if not sym:
+        return []
+    rrect = brect
+    per_cell = [[] for _ in cells]
+    for w in block_words:
+        ci = _fcf_cell_of(w, cells)
+        if ci is None:
+            continue
+        ri = _fcf_row_of(w, rows)
+        per_cell[ci].append((ri, w))
+    out = []
+    for ri in range(len(rows)):
+        tol_words = [w for r, w in per_cell[1] if r == ri or len(rows) == 1]
+        tol_txt = _fcf_tol_text(tol_words)
+        if not tol_txt:
+            continue
+        datum_txt = []
+        for ci in range(2, len(cells)):
+            dw = [w for r, w in per_cell[ci] if r == ri or len(rows) == 1]
+            for d in _fcf_datum_tokens(dw):
+                datum_txt.append(d)
+        toks = _fcf_line_tokens(sym, tol_txt, datum_txt, rrect)
+        if toks is None:
+            continue
+        line = {"key": (_VBLOCK + bi, ri), "toks": toks}
+        hits = scanpos.parse_lines([line], cfg=cfg)
+        for h in hits:
+            h["rect"] = rrect
+            h["cg"] = _VBLOCK + bi
+        out.extend(h for h in hits if h.get("tp") == "GDT")
+    return out
+
+
+def _fcf_tol_text(words):
+    from .scanpos import _norm_token
+    parts = []
+    for w in words:
+        s = _norm_token(str(w[4])).strip()
+        if s:
+            parts.append(s)
+    txt = " ".join(parts)
+    txt = re.sub(r"[()]", " ", txt)
+    m = re.search(r"(Ø?\s*[\d]+(?:[.,]\d+)?)(?:\s*([MLSP])\b)?", txt)
+    if not m:
+        return ""
+    tol = re.sub(r"\s+", "", m.group(1))
+    mod = (" " + m.group(2)) if m.group(2) else ""
+    return tol + mod
+
+
+def _fcf_datum_tokens(words):
+    out = []
+    for w in words:
+        s = re.sub(r"[()]", " ", str(w[4]))
+        for mt in re.finditer(r"\b([A-Z])\b(?:\s*([MLSP])\b)?", s):
+            d = mt.group(1)
+            if mt.group(2):
+                d += mt.group(2)
+            out.append(d)
+    return out
+
+
+def _fcf_line_tokens(sym, tol_txt, datum_txt, rrect):
+    words = list(sym)
+    if not tol_txt:
+        return None
+    tol, _, mod = tol_txt.partition(" ")
+    words.append(tol)
+    if mod:
+        words.append(mod)
+    words.extend(datum_txt)
+    return [{"t": t, "r": tuple(rrect)} for t in words if t]
 
 
 def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
@@ -609,7 +887,6 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
     conf_min = float(cfg.get("vision_ocr_conf", 0.5))
     vlm = _vlm_engine(cfg) if (allow_vlm and cfg.get("vision_vlm")) else None
     force_vlm = bool(vlm is not None and cfg.get("vision_vlm_always"))
-    # symbols to inject into off-page blocks
     sym_dets = _symbol_dets(page, cfg) if cfg.get("vision_symbols", True) else []
     table_cls = _REGION_CLASSES.index("hole_table")
     from . import common
@@ -618,7 +895,6 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
         brect = (b[0], b[1], b[2], b[3])
         in_block = [w for w in words if _center_in(w, brect)]
         has_text = [w for w in in_block if str(w[4]).strip()]
-        # region class -> kind + reader constraint
         region_cls = (_REGION_CLASSES[int(b[5])]
                       if len(b) > 5 and 0 <= int(b[5]) < len(_REGION_CLASSES)
                       else None)
@@ -626,20 +902,22 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
         cat_kind = cat[0] if cat else None
         constraint = cat[2] if cat else None
         if cat_kind == common.KIND_META:
-            continue                                     # not a measurement
+            continue
+        if not common.mode_admits_region(region_cls, cfg):
+            continue
         reader = "text"
-        if len(has_text) >= 2 and not force_vlm:      # vector PDF: text layer
+        if len(has_text) >= 2 and not force_vlm:
             block_words = in_block
-        elif vlm is not None and img is not None:      # premium VLM reader
-            if on_slow:                                 # toast before the freeze
+        elif vlm is not None and img is not None:
+            if on_slow:
                 on_slow()
-                on_slow = None                          # once, on first slow block
+                on_slow = None
             block_words = _vlm_read_block(img, s, brect, vlm,
                                           _VBLOCK + 7000 + bi * 100)
             reader = "vlm"
-            if not block_words and has_text:           # VLM read nothing -> text
+            if not block_words and has_text:
                 block_words, reader = in_block, "text"
-        elif img is not None and eng is not None:      # scanned: det+rec OCR
+        elif img is not None and eng is not None:
             if on_slow:
                 on_slow()
                 on_slow = None
@@ -648,29 +926,41 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
             reader = "ocr"
         else:
             block_words = in_block
-        # inject only for off-page readers
         inject = bool(sym_dets) and reader != "text"
         if reader == "vlm" and not cfg.get("vision_sym_inject_vlm", True):
             inject = False
         if inject:
             block_words = list(block_words)
-            for env, tok in sym_dets:
-                if not _center_in((env[0], env[1], env[2], env[3]), brect):
-                    continue
+            block_syms = [(env, tok) for env, tok in sym_dets
+                          if _center_in((env[0], env[1], env[2], env[3]), brect)]
+            if (region_cls == "feature_control_frame"
+                    and cfg.get("vision_fcf_rerun", True)):
+                crop = _symbol_dets_clip(page, cfg, brect)
+                if crop:
+                    block_syms = _dedup_syms(crop, block_syms)
+            for env, tok in block_syms:
                 if cat is not None and not common.admits(constraint, tok):
-                    continue                            # category forbids token
+                    continue
                 _attach_or_append(block_words, env, tok)
-        hits = scanpos.scan_words(block_words, include_bare=include_bare)
-        # container: keep only rows overlapping capture rect
+        hits = None
+        if (region_cls == "feature_control_frame"
+                and cfg.get("vision_fcf_structural", True)):
+            try:
+                fcf = _fcf_structural_hits(page, cfg, brect, block_words, bi)
+            except Exception:                            # pragma: no cover
+                fcf = []
+            if fcf and (cat is None or common.admits(constraint, "⌖")):
+                hits = fcf
+        if hits is None:
+            hits = scanpos.scan_words(block_words, include_bare=include_bare,
+                                      cfg=cfg)
         if cat_kind == common.KIND_CONTAINER and rect is not None:
             hits = [h for h in hits
                     if h.get("rect") is None or _rects_overlap(h["rect"], rect)]
         is_table = len(b) > 5 and int(b[5]) == table_cls
         for h in hits:
-            # disjoint cg band per block
             h["cg"] = bi * 1000 + (h["cg"] if is_table else 0)
         all_hits.extend(hits)
-    # [] -> defer to legacy scan_words path.
     return scanpos.dedup_hits(all_hits) or None
 
 
@@ -703,14 +993,14 @@ def meta_region_at(page, cfg, rect):
     meta_cls, meta_area = None, None
     for b in boxes:
         if len(b) <= 5 or not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]):
-            continue                                   # click not inside this box
+            continue
         ci = int(b[5])
         cls = _REGION_CLASSES[ci] if 0 <= ci < len(_REGION_CLASSES) else None
         cat = common.CATEGORY.get(cls)
         if cat is None:
             continue
         if cat[0] != common.KIND_META:
-            return None                                # a real callout here
+            return None
         area = (b[2] - b[0]) * (b[3] - b[1])
         if meta_area is None or area < meta_area:
             meta_cls, meta_area = cls, area
@@ -719,7 +1009,6 @@ def meta_region_at(page, cfg, rect):
 
 def _decode(pred, nc, conf_min, np):
     """-> [(x0, y0, x1, y1, conf, cls)] envelopes in letterboxed pixels."""
-    # NMS-reduced rows: (N, 6+) = x1,y1,x2,y2,conf,cls
     if pred.ndim == 2 and pred.shape[1] in (6, 7) and pred.shape[0] < pred.shape[1] + 10000:
         out = []
         for r in pred:
@@ -727,7 +1016,6 @@ def _decode(pred, nc, conf_min, np):
                 out.append((float(r[0]), float(r[1]), float(r[2]),
                             float(r[3]), float(r[4]), int(round(r[5]))))
         return out
-    # raw head: channels-first (C, A) -> (A, C)
     if pred.shape[0] < pred.shape[1]:
         pred = pred.T
     C = pred.shape[1]
@@ -753,13 +1041,64 @@ def _decode(pred, nc, conf_min, np):
 
 
 def _nms(dets, iou_thr):
-    """Greedy per-class NMS on axis-aligned envelopes."""
     dets = sorted(dets, key=lambda d: d[4], reverse=True)
     kept = []
     for d in dets:
         if all(d[5] != k[5] or _iou(d, k) < iou_thr for k in kept):
             kept.append(d)
     return kept
+
+
+def _soft_nms(dets, iou_thr, sigma=0.5, score_thr=0.05):
+    import math
+    dets = [tuple(d) for d in dets]
+    kept = []
+    while dets:
+        dets.sort(key=lambda d: d[4], reverse=True)
+        best = dets.pop(0)
+        kept.append(best)
+        rescored = []
+        for d in dets:
+            if d[5] == best[5]:
+                ov = _iou(best, d)
+                if ov > 0:
+                    d = (d[0], d[1], d[2], d[3],
+                         d[4] * math.exp(-(ov * ov) / sigma), d[5])
+            if d[4] >= score_thr:
+                rescored.append(d)
+        dets = rescored
+    return kept
+
+
+def _fuse(members):
+    wsum = sum(m[4] for m in members) or 1.0
+    return (sum(m[0] * m[4] for m in members) / wsum,
+            sum(m[1] * m[4] for m in members) / wsum,
+            sum(m[2] * m[4] for m in members) / wsum,
+            sum(m[3] * m[4] for m in members) / wsum,
+            max(m[4] for m in members), members[0][5])
+
+
+def _wbf(dets, iou_thr):
+    reps, clusters = [], []
+    for d in sorted(dets, key=lambda d: d[4], reverse=True):
+        for i, rep in enumerate(reps):
+            if rep[5] == d[5] and _iou(rep, d) >= iou_thr:
+                clusters[i].append(d)
+                reps[i] = _fuse(clusters[i])
+                break
+        else:
+            reps.append(tuple(d))
+            clusters.append([d])
+    return reps
+
+
+def _merge(dets, iou_thr, mode):
+    if mode == "wbf":
+        return _wbf(dets, iou_thr)
+    if mode == "soft":
+        return _soft_nms(dets, iou_thr)
+    return _nms(dets, iou_thr)
 
 
 def _iou(a, b):
@@ -780,7 +1119,6 @@ def _letterbox(img, size, np):
         import cv2
         resized = cv2.resize(img, (nw, nh))
     except Exception:
-        # nearest-neighbour fallback without OpenCV
         ys = (np.arange(nh) / ratio).astype(int).clip(0, h - 1)
         xs = (np.arange(nw) / ratio).astype(int).clip(0, w - 1)
         resized = img[ys][:, xs]
@@ -788,5 +1126,5 @@ def _letterbox(img, size, np):
     px, py = (size - nw) // 2, (size - nh) // 2
     canvas[py:py + nh, px:px + nw] = resized
     blob = canvas.astype("float32") / 255.0
-    blob = blob.transpose(2, 0, 1)[None]               # NCHW
+    blob = blob.transpose(2, 0, 1)[None]
     return blob, (px, py), ratio

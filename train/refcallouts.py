@@ -6,13 +6,11 @@ import glob
 import os
 import re
 
-# repo root
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _REF_PARENT = os.path.join(_REPO_ROOT, "referencedata")
 
 
 def _resolve(parent, name):
-    """Path to a child dir matching `name` case-insensitively."""
     cand = os.path.join(parent, name)
     if os.path.isdir(cand) or not os.path.isdir(parent):
         return cand
@@ -24,14 +22,11 @@ def _resolve(parent, name):
 
 
 REF_DIR = _resolve(_REF_PARENT, "Example callouts")
-# Manually cropped single-class pieces, TRAIN only.
 CROP_DIR = _resolve(_REF_PARENT, "Cropped Callouts")
 
-# Region classes.
 CLASSES = ("hole_note", "feature_control_frame", "dim_tol", "hole_table",
            "surface_finish", "datum_feature", "gentol_block", "note")
 
-# Ground truth keyed by HHMMSS code.
 GT = {
     "104929": ["hole_note"], "104938": ["hole_note"], "105005": ["hole_note"],
     "105008": ["hole_note"], "105021": ["surface_finish"],
@@ -65,13 +60,11 @@ _CODE = re.compile(r"(\d{6})(?=\.png$)")
 
 
 def code_of(path):
-    """HHMMSS code from a snippet filename, or None."""
     m = _CODE.search(os.path.basename(path))
     return m.group(1) if m else None
 
 
 def labeled_images(ref_dir=REF_DIR):
-    """Yield (path, [class, ...]) for every catalogued, non-excluded snippet."""
     for f in sorted(glob.glob(os.path.join(ref_dir, "*.png"))):
         code = code_of(f)
         if code in EXCLUDE or code not in GT:
@@ -80,16 +73,14 @@ def labeled_images(ref_dir=REF_DIR):
 
 
 def _class_of_crop(path):
-    """Region class from a cropped-snippet filename prefix, or None."""
     stem = os.path.splitext(os.path.basename(path))[0]
-    for c in sorted(CLASSES, key=len, reverse=True):   # longest first
+    for c in sorted(CLASSES, key=len, reverse=True):
         if stem == c or stem.startswith(c + "_") or stem.startswith(c + " "):
             return c
     return None
 
 
 def cropped_crops(crop_dir=CROP_DIR):
-    """(path, class) for manually cropped single-class pieces (TRAIN only)."""
     out = []
     for f in sorted(glob.glob(os.path.join(crop_dir, "*.png"))):
         c = _class_of_crop(f)
@@ -102,7 +93,6 @@ def cropped_crops(crop_dir=CROP_DIR):
 
 
 def single_class_crops(ref_dir=REF_DIR, crop_dir=CROP_DIR):
-    """(path, class) real single-class crops for TRAINING."""
     crops = [(f, classes[0]) for f, classes in labeled_images(ref_dir)
              if len(classes) == 1]
     if os.path.isdir(crop_dir):
@@ -111,11 +101,10 @@ def single_class_crops(ref_dir=REF_DIR, crop_dir=CROP_DIR):
 
 
 def load_crop_layer(path):
-    """Load a snippet as an RGBA layer keyed to transparent paper."""
     import numpy as np
     from PIL import Image
     arr = np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
     lum = arr.mean(axis=2)
-    alpha = np.clip((235 - lum) * 3, 0, 255).astype("uint8")   # dark ink opaque
+    alpha = np.clip((235 - lum) * 3, 0, 255).astype("uint8")
     rgba = np.dstack([arr.astype("uint8"), alpha])
     return Image.fromarray(rgba, "RGBA")

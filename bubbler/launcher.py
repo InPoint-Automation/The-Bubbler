@@ -12,30 +12,28 @@ from PySide6.QtWidgets import (QApplication, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QFileDialog, QDialog, QListWidget,
                                QListWidgetItem, QPushButton, QMessageBox)
 
-from .common import APP_NAME
+from .common import APP_NAME, qc_path
 from .config import load_cfg, save_cfg
 from .sheet import ensure_xlsx
 from .icons import make_pixmap
 from .theme import OFFICE, apply_office_theme
 from .app import MainWindow
+from .i18n import tr
 
 
 def _pdf_status(pdf):
-    """Side-car counts: bubbles, saved rows, sheet present."""
-    base = os.path.splitext(pdf)[0]
     n = saved = 0
     try:
-        with open(base + "_bubbles.json", "r", encoding="utf-8") as f:
+        with open(qc_path(pdf, "_bubbles.json"), "r", encoding="utf-8") as f:
             ledger = json.load(f).get("ledger", [])
         n = len(ledger)
         saved = sum(1 for d in ledger if d.get("sheet_row") is not None)
     except Exception:
         pass
-    return n, saved, os.path.isfile(base + "_Inspection.xlsx")
+    return n, saved, os.path.isfile(qc_path(pdf, "_Inspection.xlsx"))
 
 
 def _recent_row_widget(pdf):
-    """Recent-list row. Name, folder, status chip."""
     n, saved, has_sheet = _pdf_status(pdf)
     w = QWidget()
     row = QHBoxLayout(w)
@@ -57,12 +55,12 @@ def _recent_row_widget(pdf):
 
     if n:
         unsaved = n - saved
-        label = "%d bubble%s" % (n, "" if n == 1 else "s")
+        label = (tr('%d bubble') if n == 1 else tr('%d bubbles')) % n
         if unsaved:
-            label += " - %d unsaved" % unsaved
+            label += " - " + tr('%d unsaved') % unsaved
         chip_bg, chip_fg, chip_bd = "#dbe7f8", OFFICE["accent"], "#9bbce6"
     else:
-        label = "no bubbles yet"
+        label = tr('no bubbles yet')
         chip_bg, chip_fg, chip_bd = "#e6eaf1", OFFICE["muted"], "#cdd5e2"
     chip = QLabel(label)
     chip.setStyleSheet(
@@ -75,14 +73,38 @@ def _recent_row_widget(pdf):
         sheet_ic = QLabel()
         sheet_ic.setPixmap(make_pixmap("check", color=OFFICE["green"], px=12))
         row.addWidget(sheet_ic, 0, Qt.AlignVCenter)
-        sheet = QLabel("sheet")
+        sheet = QLabel(tr('sheet'))
         sheet.setStyleSheet("font-size:8pt; color:%s;" % OFFICE["green"])
     else:
-        sheet = QLabel("no sheet")
+        sheet = QLabel(tr('no sheet'))
         sheet.setStyleSheet("font-size:8pt; color:%s;" % OFFICE["muted"])
     row.addWidget(sheet, 0, Qt.AlignVCenter)
     w.setToolTip(pdf)
     return w
+
+
+def _pdf_from_drop(mime):
+    if not mime.hasUrls():
+        return ""
+    for u in mime.urls():
+        p = u.toLocalFile()
+        if p.lower().endswith(".pdf") and os.path.isfile(p):
+            return p
+    return ""
+
+
+class _DropDialog(QDialog):
+    dropped = ""
+
+    def dragEnterEvent(self, e):
+        if _pdf_from_drop(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        p = _pdf_from_drop(e.mimeData())
+        if p:
+            self.dropped = p
+            self.accept()
 
 
 def _pick_pdf(cfg):
@@ -90,20 +112,21 @@ def _pick_pdf(cfg):
     recent = [p for p in (cfg.get("recent") or []) if os.path.isfile(p)]
     if not recent:
         path, _ = QFileDialog.getOpenFileName(
-            None, "PDF print / Rysunek PDF", initdir, "PDF (*.pdf)")
+            None, tr('PDF print'), initdir, "PDF (*.pdf)")
         return path
-    dlg = QDialog()
-    dlg.setWindowTitle("%s - open / otwórz" % APP_NAME)
+    dlg = _DropDialog()
+    dlg.setAcceptDrops(True)
+    dlg.setWindowTitle(tr('%s - open') % APP_NAME)
     lay = QVBoxLayout(dlg)
     lay.setContentsMargins(16, 14, 16, 14)
     lay.setSpacing(10)
 
-    title = QLabel("Open a drawing / Otwórz rysunek")
+    title = QLabel(tr('Open a drawing'))
     title.setStyleSheet("font-size:14pt; font-weight:bold; color:%s;"
                         % OFFICE["text"])
     lay.addWidget(title)
-    sub = QLabel("Pick a recent drawing or browse for a PDF. The chip shows "
-                 "how many bubbles it already has.")
+    sub = QLabel(tr("Pick a recent drawing or browse for a PDF. The chip shows "
+                    "how many bubbles it already has."))
     sub.setStyleSheet("color:%s; font-size:9pt;" % OFFICE["muted"])
     sub.setWordWrap(True)
     lay.addWidget(sub)
@@ -130,7 +153,7 @@ def _pick_pdf(cfg):
 
     def browse():
         p, _ = QFileDialog.getOpenFileName(
-            dlg, "PDF print / Rysunek PDF", initdir, "PDF (*.pdf)")
+            dlg, tr('PDF print'), initdir, "PDF (*.pdf)")
         if p:
             sel["path"] = p
             dlg.accept()
@@ -139,11 +162,11 @@ def _pick_pdf(cfg):
     bw = QWidget()
     bl = QHBoxLayout(bw)
     bl.setContentsMargins(0, 0, 0, 0)
-    b_browse = QPushButton("Browse... / Przeglądaj...")
+    b_browse = QPushButton(tr('Browse...'))
     b_browse.clicked.connect(browse)
-    b_cancel = QPushButton("Cancel / Anuluj")
+    b_cancel = QPushButton(tr('Cancel'))
     b_cancel.clicked.connect(dlg.reject)
-    b_open = QPushButton("Open / Otwórz")
+    b_open = QPushButton(tr('Open'))
     b_open.clicked.connect(use)
     b_open.setDefault(True)
     bl.addWidget(b_browse)
@@ -153,7 +176,7 @@ def _pick_pdf(cfg):
     lay.addWidget(bw)
     dlg.resize(620, 320)
     dlg.exec()
-    return sel["path"]
+    return dlg.dropped or sel["path"]
 
 
 def main():
@@ -163,14 +186,22 @@ def main():
     pdf = sys.argv[1] if len(sys.argv) > 1 else _pick_pdf(cfg)
     if not pdf:
         sys.exit("No PDF.")
-    base = os.path.splitext(pdf)[0] + "_Inspection"
-    xlsx = sys.argv[2] if len(sys.argv) > 2 else base + ".xlsx"
+    sub = cfg.get("qc_subdir", "qc")
+    default_xlsx = qc_path(pdf, "_Inspection.xlsx", subdir=sub)
+    xlsx = sys.argv[2] if len(sys.argv) > 2 else default_xlsx
+    d = os.path.dirname(xlsx)
+    if d and not os.path.isdir(d):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except PermissionError:
+            xlsx = qc_path(pdf, "_Inspection.xlsx", subdir="")
     try:
-        created = ensure_xlsx(xlsx, str(cfg.get("company") or ""))
+        created = ensure_xlsx(xlsx, str(cfg.get("company") or ""),
+                              sheet_lang=cfg.get("sheet_lang", "both"))
     except RuntimeError as e:
-        QMessageBox.critical(None, "Template", str(e))
+        QMessageBox.critical(None, tr('Template'), str(e))
         xlsx, _ = QFileDialog.getOpenFileName(
-            None, "Inspection sheet / Karta kontroli (xlsx)",
+            None, tr('Inspection sheet'),
             os.path.dirname(pdf), "Excel (*.xlsx)")
         if not xlsx:
             sys.exit("No xlsx.")
@@ -182,5 +213,5 @@ def main():
     win = MainWindow(pdf, xlsx, cfg=cfg)
     win.show()
     if created:
-        win.set_status("created / utworzono: %s" % os.path.basename(xlsx))
+        win.set_status(tr('created: %s') % os.path.basename(xlsx))
     sys.exit(app.exec())

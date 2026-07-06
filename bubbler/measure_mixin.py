@@ -3,9 +3,14 @@
 #
 # Measure-walk behaviour, mixed into MainWindow.
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 
-from .common import base_of, tol_text, limits_of, out_of_tol
+from .common import (base_of, tol_text, limits_of, out_of_tol,
+                     mirror_measured)
+from .config import save_cfg
+from .i18n import tr
 
 
 class MeasureMixin:
@@ -27,14 +32,15 @@ class MeasureMixin:
             if not self._walk:
                 self.measure_mode = False
                 self.btn_measure.setChecked(False)
-                self.set_status("no bubbles to measure / brak bąbli")
+                self.set_status(tr('no bubbles to measure'))
                 return
             self._mbar_dock.show()
             self._walk_idx = 0
-            for k, idx in enumerate(self._walk):
-                if self.ledger[idx].get("measured") in (None, ""):
-                    self._walk_idx = k
-                    break
+            if self._skip_filled():
+                for k, idx in enumerate(self._walk):
+                    if not self.ledger[idx].get("ops"):
+                        self._walk_idx = k
+                        break
             self._walk_show()
         else:
             self._mbar_dock.hide()
@@ -104,7 +110,7 @@ class MeasureMixin:
         old = ("" if d.get("measured") in (None, "") else str(d["measured"]))
         if val != old:
             self.snapshot()
-            d["measured"] = val or None
+            self._record_op(d, val)
             self._save_session()
             self.refresh_panel()
         extra = ""
@@ -113,21 +119,22 @@ class MeasureMixin:
             if out_of_tol(d):
                 lim = limits_of(d)
                 rng = ("%.4g-%.4g" % lim) if lim else ""
-                extra = "#%s OUT OF TOL / poza tolerancją %s" \
-                        % (d["bubble"], rng)
+                extra = (tr('#%s OUT OF TOL %s')
+                         % (d["bubble"], rng)).rstrip()
                 level = "warn"
             else:
                 extra = "#%s = %s" % (d["bubble"], val)
                 level = "check"
         if self._walk_idx + delta > len(self._walk) - 1:
-            nxt = [k for k, i2 in enumerate(self._walk)
-                   if self.ledger[i2].get("measured") in (None, "")]
+            nxt = ([k for k, i2 in enumerate(self._walk)
+                    if not self.ledger[i2].get("ops")]
+                   if self._skip_filled() else [])
             if nxt:
                 self._walk_idx = nxt[0]
                 self._walk_show()
             else:
                 self.set_status(("%s   " % extra if extra else "") +
-                                "measure walk complete / pomiar zakończony",
+                                tr('measure walk complete'),
                                 icon=level)
                 self._set_measure(False)
                 return
@@ -138,21 +145,54 @@ class MeasureMixin:
             self.set_status(extra, icon=level)
 
     def _mgage_changed(self, txt):
-        # live gage override mid-walk
         if self._mbar_sync or not self._walk:
             return
         idx = self._walk[self._walk_idx]
         if idx < len(self.ledger):
-            self.ledger[idx]["gage"] = txt or None
+            d = self.ledger[idx]
+            d["gage"] = txt or None
+            rec = d.get("ops", {}).get(self._current_op())
+            if rec is not None:
+                rec["gage"] = txt or None
             self._save_session()
             self.refresh_panel()
 
     def _measure_quick(self, val):
-        # GO / NOGO one-click
         if not self._walk:
             return
         self.ment.setText(val)
         self._walk_commit(+1)
+
+    def _current_op(self):
+        return getattr(self, "_measure_op", None) or "op1"
+
+    def _skip_filled(self):
+        return bool(self.cfg.get("measure_skip_filled", True))
+
+    def _mop_changed(self, txt):
+        self._measure_op = txt or "op1"
+
+    def _mskip_toggled(self, on):
+        self.cfg["measure_skip_filled"] = bool(on)
+        save_cfg(self.cfg)
+
+    def _record_op(self, d, val):
+        self._record_op_into(d, self._current_op(), val,
+                             self.mgage_cb.currentText())
+
+    def _record_op_into(self, d, op, val, gage):
+        ops = d.setdefault("ops", {})
+        if val:
+            ops[op] = {"measured": val, "gage": gage or None,
+                       "ts": datetime.now().isoformat(timespec="minutes")}
+            mirror_measured(d)
+        else:
+            ops.pop(op, None)
+            if ops:
+                mirror_measured(d)
+            else:
+                d.pop("ops", None)
+                d["measured"] = None
 
     def measure_bubble(self, basenum):
         if not self.measure_mode or not self._walk:

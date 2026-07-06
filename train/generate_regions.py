@@ -23,31 +23,32 @@ from generate_dataset import (                        # noqa: E402
     TILE, _font, _ink, _num, _glyph_tile, _clutter, _degrade, _background,
     _rotate_img, _quad_after_paste, _load_font_dir, _REPO_FONTS,
     _callout_lines, _THRU_WORDS, _FITS_HOLE, _THREADS, _TCLASS,
+    _thread_asme, _frac_inch, _dim_num_asme, _drill_size_asme, _finish_uin,
+    _dual_dim_asme, _dia_word,
 )
 
-# Real hand-labelled callout crops mixed into training.
+_STYLE = "iso"
+
 _REF_CROPS = []
 _REF_PROB = 0.0
 
 # Order == label index; mirror in bubbler/vision.py.
 REGION_CLASSES = [
-    "hole_note",             # drill/cbore/csink/thread
-    "feature_control_frame", # boxed GD&T compartments
-    "dim_tol",               # dim ± tol
-    "hole_table",            # OTWÓR/OPIS grid
-    "surface_finish",        # Ra/Rz callout
-    "datum_feature",         # boxed datum letter + triangle
-    "gentol_block",          # general-tolerance text
-    "note",                  # free-text annotation
+    "hole_note",
+    "feature_control_frame",
+    "dim_tol",
+    "hole_table",
+    "surface_finish",
+    "datum_feature",
+    "gentol_block",
+    "note",
 ]
 
-# Oversample the rarer blocks.
 _WEIGHTS = {
     "hole_note": 3, "feature_control_frame": 3, "dim_tol": 3, "hole_table": 2,
     "surface_finish": 2, "datum_feature": 2, "gentol_block": 2, "note": 2,
 }
 
-# GD&T symbols that can head a feature-control frame.
 _FCF_SYMS = ("position", "flatness", "circularity", "cylindricity",
              "perpendicularity", "parallelism", "angularity", "concentricity",
              "profile_line", "profile_surface", "runout_total",
@@ -70,11 +71,10 @@ _NOTES = ("ALLE KANTEN ENTGRATEN", "BREAK ALL SHARP EDGES",
           "Werkstoff: S235JR", "Material: 1.4301", "Gewicht: 0,42 kg")
 
 
-_NUMRUN = re.compile(r"\d+(?:[.,]\d+)?")        # numeric runs
+_NUMRUN = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def _probe():
-    """Throwaway draw context for textlength() measurement."""
     return ImageDraw.Draw(Image.new("RGB", (4, 4)))
 
 
@@ -83,7 +83,6 @@ def _layer(w, h):
 
 
 def _block_angle(rnd, allow_strong=False):
-    """Mostly upright; some carry leader skew."""
     r = rnd.random()
     if r < 0.72:
         return 0.0
@@ -93,7 +92,6 @@ def _block_angle(rnd, allow_strong=False):
 
 
 def _place_block(base, layer, rnd, allow_strong=False):
-    """Crop, rotate, paste; return oriented quad."""
     bb = layer.getbbox()
     if not bb:
         return None
@@ -108,11 +106,8 @@ def _place_block(base, layer, rnd, allow_strong=False):
     return _quad_after_paste([(0, 0), (w, 0), (w, h), (0, h)], mp, px, py)
 
 
-# Block builders.
-
 def _lines_to_layer(lines, rnd, th, indent=False, underline=False,
                     box_numbers=False, circled=None, circled_end=False):
-    """Render line tokens; symbols become glyph tiles."""
     font = _font(int(th * 1.25), rnd)
     gap = max(2, th // 5)
     lh = int(th * 1.7)
@@ -132,7 +127,7 @@ def _lines_to_layer(lines, rnd, th, indent=False, underline=False,
                 x += tile.width + gap
         rows.append(items)
         maxw = max(maxw, x)
-    cd = int(th * 1.5) if circled else 0           # balloon diameter
+    cd = int(th * 1.5) if circled else 0
     lpad = (cd + th // 2) if (circled and not circled_end) else 0
     rpad = (cd + th // 2) if (circled and circled_end) else 0
     layer = _layer(maxw + 2 * m + lpad + rpad, lh * len(rows) + 2 * m)
@@ -188,9 +183,12 @@ def build_fcf(rnd):
     pr = _probe()
     c1 = tw + H // 3
     mod = rnd.choice(("", "", "(M)", "(L)", "(P)"))
-    zone = rnd.choice(("", "", "", " CZ", " CF"))     # combined/common zone
-    tol = ("Ø" if rnd.random() < 0.45 else "") + \
-        rnd.choice(("0.1", "0.05", "0.2", "0.02", "0.5", "0.01")) + mod + zone
+    zone = rnd.choice(("", "", "", " CZ", " CF"))
+    # keep RNG order: Ø-test then value (matches ISO byte-stream)
+    dia = "Ø" if rnd.random() < 0.45 else ""
+    tval = _dim_num_asme(rnd, 0.001, 0.03) if gd._SAMPLE_ASME \
+        else rnd.choice(("0.1", "0.05", "0.2", "0.02", "0.5", "0.01"))
+    tol = dia + tval + mod + zone
     c2 = int(pr.textlength(tol, font=font)) + H // 2
     datums = []
     for _ in range(rnd.randint(0, 3)):
@@ -215,13 +213,13 @@ def build_fcf(rnd):
         ld.line((x, oy, x, oy + H), fill=ink, width=1)
         ld.text((x + H // 3, oy + (H - thh) // 2), dt, fill=ink, font=font)
         x += cells[2 + k]
-    if rnd.random() < 0.2:                       # all-around circle
+    if rnd.random() < 0.2:
         ld.ellipse((ox - H // 3, oy - H // 3, ox, oy), outline=ink, width=1)
-    if rnd.random() < 0.35:                       # datum-feature triangle
+    if rnd.random() < 0.35:
         tx, ty = ox + rnd.randint(0, W), oy + H
         ld.polygon((tx, ty, tx - 5, ty + 8, tx + 5, ty + 8), fill=ink)
         ld.line((tx, ty + 8, tx, ty + 18), fill=ink, width=1)
-        if rnd.random() < 0.7:                    # boxed datum letter
+        if rnd.random() < 0.7:
             dl = rnd.choice("ABCD")
             by, bw = ty + 18, th
             ld.rectangle((tx - bw // 2, by, tx + bw // 2, by + bw),
@@ -233,20 +231,31 @@ def build_fcf(rnd):
 
 
 def build_dim_tol(rnd):
+    asme = gd._SAMPLE_ASME
     th = rnd.randint(15, 34)
     font = _font(int(th * 1.2), rnd)
     ink = _ink(rnd)
     pr = _probe()
     m = th
-    pre = rnd.choice(("Ø", "Ø", "R", "", ""))
-    val = _num(rnd, 1, 120, rnd.choice((0, 1, 2)))
-    fit = rnd.choice(("", "", "", " H7", " H8", " g6", " k6", " H7"))
+    if asme:
+        pre = rnd.choice((_dia_word(rnd), _dia_word(rnd), "R", "R.", "", ""))
+        val = _dim_num_asme(rnd, 0.1, 12) if rnd.random() < 0.7 \
+            else _frac_inch(rnd)
+        fit = ""
+    else:
+        pre = rnd.choice(("Ø", "Ø", "R", "", ""))
+        val = _num(rnd, 1, 120, rnd.choice((0, 1, 2)))
+        fit = rnd.choice(("", "", "", " H7", " H8", " g6", " k6", " H7"))
     style = rnd.random()
     if style < 0.22:
-        # value with stacked upper/lower deviations
-        up = "+%s" % _num(rnd, 0.01, 0.2, 2)
-        lo = ("+%s" % _num(rnd, 0.0, 0.1, 2)) if rnd.random() < 0.4 \
-            else ("-%s" % _num(rnd, 0.01, 0.2, 2))
+        if asme:
+            up = "+%s" % _dim_num_asme(rnd, 0.0005, 0.01)
+            lo = ("+%s" % _dim_num_asme(rnd, 0.0, 0.005)) if rnd.random() < 0.4 \
+                else ("-%s" % _dim_num_asme(rnd, 0.0005, 0.01))
+        else:
+            up = "+%s" % _num(rnd, 0.01, 0.2, 2)
+            lo = ("+%s" % _num(rnd, 0.0, 0.1, 2)) if rnd.random() < 0.4 \
+                else ("-%s" % _num(rnd, 0.01, 0.2, 2))
         base = "%s%s%s " % (pre, val, fit)
         sfont = _font(int(th * 0.72), rnd)
         bw = int(pr.textlength(base, font=font))
@@ -259,19 +268,27 @@ def build_dim_tol(rnd):
         ld.text((m + bw, m + th * 0.85), lo, fill=ink, font=sfont)
         return layer
     if style < 0.58:
-        txt = "%s%s%s ±%s" % (pre, val, fit, _num(rnd, 0.01, 0.5, 2))
+        pm = _dim_num_asme(rnd, 0.0005, 0.01) if asme else _num(rnd, 0.01, 0.5, 2)
+        if asme and rnd.random() < 0.25:
+            txt = "%s ±%s" % (_dual_dim_asme(rnd), pm)
+        else:
+            txt = "%s%s%s ±%s" % (pre, val, fit, pm)
     elif style < 0.72:
-        txt = "%s%s%s" % (pre, val, fit)                          # bare dim/fit
+        txt = "%s%s%s" % (pre, val, fit)
     elif style < 0.85:
-        txt = "%s°" % _num(rnd, 5, 120, rnd.choice((0, 1)))       # angle
+        txt = "%s°" % _num(rnd, 5, 120, rnd.choice((0, 1)))
     else:
-        txt = "%s%s +%s/-%s" % (pre, val, _num(rnd, 0.01, 0.3, 2),
-                                _num(rnd, 0.01, 0.3, 2))
+        if asme:
+            txt = "%s%s +%s/-%s" % (pre, val, _dim_num_asme(rnd, 0.0005, 0.01),
+                                    _dim_num_asme(rnd, 0.0005, 0.01))
+        else:
+            txt = "%s%s +%s/-%s" % (pre, val, _num(rnd, 0.01, 0.3, 2),
+                                    _num(rnd, 0.01, 0.3, 2))
     w = int(pr.textlength(txt, font=font))
     layer = _layer(w + 2 * m, int(th * 2.4) + 2 * m)
     ld = ImageDraw.Draw(layer)
     ld.text((m, m), txt, fill=ink, font=font)
-    if rnd.random() < 0.6:                        # dimension line + arrowheads
+    if rnd.random() < 0.6:
         ly = m + int(th * 1.6)
         ld.line((m, ly, m + w, ly), fill=ink, width=1)
         ld.polygon((m, ly, m + 7, ly - 3, m + 7, ly + 3), fill=ink)
@@ -280,7 +297,15 @@ def build_dim_tol(rnd):
 
 
 def _table_desc(rnd):
-    """One hole-table description cell."""
+    if gd._SAMPLE_ASME:
+        if rnd.random() < 0.35:
+            return _thread_asme(rnd)
+        pre = rnd.choice((_dia_word(rnd), _dia_word(rnd), ""))
+        d = _frac_inch(rnd) if rnd.random() < 0.4 else _dim_num_asme(rnd, 0.1, 2)
+        tail = rnd.choice(("", " " + rnd.choice(_THRU_WORDS), " DRILL", " REAM",
+                           " C'BORE %s %s" % (_dia_word(rnd),
+                                              _dim_num_asme(rnd, 0.2, 1))))
+        return "%s%s%s" % (pre, d, tail)
     if rnd.random() < 0.3:
         return "%s - %s" % (rnd.choice(_THREADS), rnd.choice(_TCLASS))
     pre = rnd.choice(("Ø", "Ø", ""))
@@ -314,10 +339,10 @@ def build_hole_table(rnd):
     layer = _layer(W + 2 * m, H + 2 * m)
     ld = ImageDraw.Draw(layer)
     ox = oy = m
-    for r in range(nrows + 2):                    # horizontal rules
+    for r in range(nrows + 2):
         y = oy + r * rowh
         ld.line((ox, y, ox + W, y), fill=ink, width=1)
-    for cx in (ox, ox + c0, ox + W):              # vertical rules
+    for cx in (ox, ox + c0, ox + W):
         ld.line((cx, oy, cx, oy + H), fill=ink, width=1)
     ld.text((ox + th // 2, oy + th // 4), head[0], fill=ink, font=font)
     ld.text((ox + c0 + th // 2, oy + th // 4), head[1], fill=ink, font=font)
@@ -333,7 +358,10 @@ def build_surface_finish(rnd):
     sym = _glyph_tile("surface_roughness", th, rnd)
     font = _font(int(th * 0.95), rnd)
     ink = _ink(rnd)
-    txt = rnd.choice(("Ra %s", "Rz %s", "%s", "Ra%s")) % _num(rnd, 0.4, 25, 1)
+    if gd._SAMPLE_ASME:
+        txt = _finish_uin(rnd)
+    else:
+        txt = rnd.choice(("Ra %s", "Rz %s", "%s", "Ra%s")) % _num(rnd, 0.4, 25, 1)
     pr = _probe()
     tw = int(pr.textlength(txt, font=font))
     m = th
@@ -360,7 +388,7 @@ def build_datum(rnd):
     ox = oy = m
     ld.rectangle((ox, oy, ox + box, oy + box), outline=ink, width=rnd.choice((1, 2)))
     ld.text((ox + (box - lw) // 2, oy + box // 6), letter, fill=ink, font=font)
-    tx, ty = ox + box // 2, oy + box                # stem + triangle below
+    tx, ty = ox + box // 2, oy + box
     ld.line((tx, ty, tx, ty + th), fill=ink, width=1)
     fy = ty + th
     tri = (tx - th // 2, fy + th // 2, tx + th // 2, fy + th // 2, tx, fy)
@@ -418,12 +446,10 @@ _BUILDERS = {
 _POOL = [c for c in REGION_CLASSES for _ in range(_WEIGHTS[c])]
 
 
-# real crops that may carry leader skew
 _STRONG_CLASSES = {"hole_note", "dim_tol", "note"}
 
 
 def _real_crop_block(rnd):
-    """Pick real crop, key paper out, random-scale."""
     path, cls = rnd.choice(_REF_CROPS)
     try:
         layer = refcallouts.load_crop_layer(path)
@@ -436,8 +462,9 @@ def _real_crop_block(rnd):
 
 
 def _gen_one_region(rnd):
+    gd._resolve_sample_style(rnd)
     img = _background(rnd).copy()
-    _clutter(ImageDraw.Draw(img), rnd)         # drawing noise
+    _clutter(ImageDraw.Draw(img), rnd)
     labels = []
     for _ in range(rnd.randint(1, 3)):
         if _REF_CROPS and rnd.random() < _REF_PROB:
@@ -463,8 +490,6 @@ def _gen_one_region(rnd):
     return img, labels
 
 
-# Write harness.
-
 def _gen_task_region(job):
     split, i, idir, ldir, seed = job
     rnd = random.Random((seed * 1000003) ^ (i * 2654435761 & 0xFFFFFFFF) ^
@@ -482,11 +507,13 @@ def _gen_task_region(job):
             f.write("%d %s\n" % (ci, " ".join(coords)))
 
 
-def _init_worker(bg_files, font_files, gdt_font_files, ref_crops, ref_prob):
-    global _REF_CROPS, _REF_PROB
+def _init_worker(bg_files, font_files, gdt_font_files, ref_crops, ref_prob,
+                 style="iso"):
+    global _REF_CROPS, _REF_PROB, _STYLE
     gd._BG_FILES, gd._FONT_FILES, gd._GDT_FONT_FILES = \
         bg_files, font_files, gdt_font_files
     _REF_CROPS, _REF_PROB = ref_crops, ref_prob
+    _STYLE = gd._STYLE = style   # spawn workers don't inherit module globals
 
 
 def _write_serial(split, jobs):
@@ -516,7 +543,7 @@ def _write(split, n, out, seed, workers):
                                  initializer=_init_worker,
                                  initargs=(gd._BG_FILES, gd._FONT_FILES,
                                            gd._GDT_FONT_FILES,
-                                           _REF_CROPS, _REF_PROB)) as ex:
+                                           _REF_CROPS, _REF_PROB, _STYLE)) as ex:
             done = 0
             for fut in as_completed([ex.submit(_gen_task_region, j) for j in jobs]):
                 fut.result()
@@ -544,10 +571,14 @@ def main():
     ap.add_argument("--ref-prob", type=float, default=0.25,
                     help="chance a block slot uses a real crop (0 = synth only)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--style", choices=("iso", "asme", "mixed"), default="iso",
+                    help="content vocab standard (asme = inch/UNC/uin; "
+                         "mixed = per-sample coin flip). iso is byte-stable.")
     ap.add_argument("--workers", type=int, default=0,
                     help="parallel processes (0 = all cores; 1 = serial)")
     args = ap.parse_args()
-    global _REF_CROPS, _REF_PROB
+    global _REF_CROPS, _REF_PROB, _STYLE
+    _STYLE = gd._STYLE = args.style
     workers = args.workers or (os.cpu_count() or 1)
     if args.bg_dir:
         for ext in ("*.png", "*.jpg", "*.jpeg"):

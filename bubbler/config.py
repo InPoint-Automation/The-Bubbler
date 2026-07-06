@@ -27,39 +27,68 @@ CFG_DEFAULT = {
     "recent": [],
     "cmm_tol": 0.01,
     "micrometer_tol": 0.03,
-    "hole_pin_auto": True,
-    "hole_position_rows": True,  # off = single Ø row
+    "ops_list": ["op1", "op2", "op3", "final"],
+    "measure_skip_filled": True,
+    "cmm_import_op": "",           # "" = ask each time
+    "oot_report_sheet": False,
+    "hole_pin_auto": False,
+    "hole_position_rows": False,
+    "units": "iso_mm",
+    "mode": "advanced",
+    "qc_subdir": "qc",       # "" = beside PDF
+    "titleblock_autofill": True,
     "dp_on": False,
     "dp_tols": {"0": 0.5, "1": 0.2, "2": 0.05, "3": 0.01},
+    "dp_tols_inch": {"1": 0.03, "2": 0.01, "3": 0.005, "4": 0.0005},
+    "dp_angle": 1.0,         # +/- deg
     "snap_geom": True,
+    "tier_shapes": True,
+    "tier_shape_map": {"red": "circle", "blue": "square",
+                       "green": "triangle"},
+    "type_tier_auto": False,
+    "type_tier_map": {"dim": "red", "hole": "red", "thread": "red",
+                      "thru": "red", "slot": "red", "depth": "red",
+                      "position": "red", "GD&T": "red", "finish": "red"},
     "offset_dir": "auto",
     "hotbar_on": True,
-    "obstacle_min_w": 0.5,   # min stroke width (pt) that repels
-    "language": "en",        # "en" or "pl"
-    "capture_radius": 12.0,  # click-box half-width, pt
-    # vision pipeline
-    "vision_assist": True,   # master switch
-    "vision_ocr": True,      # OCR sparse-text pages
-    "vision_ocr_always": False,  # OCR every page
-    "vision_ocr_conf": 0.5,  # min OCR confidence
-    "vision_ocr_engine": "rapidocr",  # rapidocr | paddle
-    "vision_symbols": True,  # GD&T symbol detector
-    "vision_sym_conf": 0.35,  # min confidence
-    "vision_nms_iou": 0.45,   # NMS IoU
-    "vision_dpi": 200,       # render DPI
-    "vision_imgsz": 640,     # detector input size
+    "obstacle_min_w": 0.5,   # pt
+    "language": "en",
+    "sheet_lang": "both",
+    "capture_radius": 12.0,  # pt
+    "vision_assist": True,
+    "vision_ocr": True,
+    "vision_ocr_always": False,
+    "vision_ocr_conf": 0.5,
+    "vision_ocr_engine": "rapidocr",
+    "vision_symbols": True,
+    "vision_sym_conf": 0.35,
+    "vision_nms_iou": 0.45,
+    "vision_dpi": 200,
+    "vision_imgsz": 640,
+    "vision_tile": True,
+    "vision_tile_overlap": 0.2,  # must exceed largest symbol
+    "vision_merge": "wbf",
+    "vision_fcf_rerun": True,    # unrotated only
+    "vision_fcf_dpi": 600,
+    "vision_fcf_conf": 0.25,
+    "vision_fcf_structural": True,
+    "vision_fcf_divider_min": 0.6,
+    "vision_fcf_proj_gap": 2,       # px
+    "collect_corrections": False,
+    "corrections_dir": "",          # blank -> ~/.bubbler/corrections
+    "corrections_github_url":
+        "https://github.com/InPoint-Automation/The-Bubbler/issues/new",
+    "corrections_email": "",        # blank hides the Email button
     "vision_model": "",      # blank = bundled
-    "vision_ep": "auto",     # auto | cpu | directml | cuda
-    # block detector
-    "vision_region": True,        # group via detector
-    "vision_region_conf": 0.35,   # min confidence
+    "vision_ep": "auto",
+    "vision_region": True,
+    "vision_region_conf": 0.35,
     "vision_region_model": "",    # blank = bundled
-    # VLM reader (slow)
-    "vision_vlm": False,          # enable on add/scan
-    "vision_vlm_always": False,   # use even with text layer
-    "vision_vlm_engine": "florence",  # florence | paddleocr_vl
+    "vision_vlm": False,
+    "vision_vlm_always": False,
+    "vision_vlm_engine": "florence",
     "vision_vlm_model": "",       # blank = bundled
-    "vision_sym_inject_vlm": True,  # splice GD&T into reads
+    "vision_sym_inject_vlm": True,
     "vision_paddlevl_model": "",  # blank = paddle cache
 }
 
@@ -74,12 +103,21 @@ def load_cfg():
               file=sys.stderr)
         return cfg
     for k, v in data.items():
-        # merge nested dicts, keep default sub-keys
         if isinstance(v, dict) and isinstance(cfg.get(k), dict):
             cfg[k].update(v)
         else:
             cfg[k] = v
     return cfg
+
+
+def units_of(cfg, session=None):
+    for src in (session, cfg):
+        if not src:
+            continue
+        u = src.get("units")
+        if u in ("iso_mm", "asme_inch"):
+            return u
+    return "iso_mm"
 
 
 def save_cfg(cfg):

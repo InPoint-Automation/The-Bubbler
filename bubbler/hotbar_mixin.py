@@ -7,8 +7,10 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMenu
 
 from .common import TYPES, TIERS
-from .config import save_cfg
+from .config import save_cfg, units_of
 from .hotbar import Hotbar, HotbarAction
+from .widgets import set_combo_key
+from .i18n import tr
 
 
 class HotbarMixin:
@@ -44,7 +46,6 @@ class HotbarMixin:
         if self._qbar is not None:
             bar = self._qbar
             self._qbar = None
-            # clear drop-shadow ghost
             geo = bar.geometry().adjusted(-32, -32, 32, 32)
             bar.hide()
             bar.deleteLater()
@@ -61,12 +62,12 @@ class HotbarMixin:
         cur = self.last.get("type", TYPES[0])
         i = (TYPES.index(cur) + 1) % len(TYPES) if cur in TYPES else 0
         self._rib_set("type", TYPES[i], group=True)
-        self.cb_type.setCurrentText(TYPES[i])
+        set_combo_key(self.cb_type, TYPES[i])
 
     def _set_type_index(self, i):
         if 0 <= i < len(TYPES):
             self._rib_set("type", TYPES[i], group=True)
-            self.cb_type.setCurrentText(TYPES[i])
+            set_combo_key(self.cb_type, TYPES[i])
 
     def _cycle_tier(self):
         cur = self.last.get("tier", "")
@@ -114,21 +115,21 @@ class HotbarMixin:
         if self.tool == "select":
             n = len(self.sel)
             return [
-                A("tool_add", "A", "Add tool / Dodawanie",
+                A("tool_add", "A", tr('Add tool'),
                   lambda: self.set_tool("add")),
-                A("align_row", "R", "Align row / W rząd",
+                A("align_row", "R", tr('Align row'),
                   lambda: self.align_sel("h"), enabled=n >= 2),
-                A("align_col", "C", "Align col / W kolumnę",
+                A("align_col", "C", tr('Align col'),
                   lambda: self.align_sel("v"), enabled=n >= 2),
                 A("dist_h", "H", "Distribute H / Rozłóż H",
                   lambda: self.distribute_sel("h"), enabled=n >= 3),
-                A("dist_v", "W", "Distribute V / Rozłóż V",
+                A("dist_v", "W", tr('Distribute V'),
                   lambda: self.distribute_sel("v"), enabled=n >= 3),
                 A("delete", "Del", "Delete / Usuń",
                   self.delete_selection, enabled=n >= 1),
-                A("clear", "Esc", "Clear sel. / Wyczyść",
+                A("clear", "Esc", tr('Clear sel.'),
                   self._esc, enabled=n >= 1),
-                A("measure", "M", "Measure / Pomiar",
+                A("measure", "M", tr('Measure'),
                   lambda: self._kbd_toggle("m")),
             ]
         return [
@@ -136,8 +137,12 @@ class HotbarMixin:
               % self.last.get("type", "?").split(" /")[0], self._cycle_type),
             A("tier", "T", "Tier: %s" % (self.last.get("tier") or "-"),
               self._cycle_tier),
-            A("iso", "I", "ISO auto: %s"
-              % ("on" if self.last.get("iso_on") else "off"),
+            A("iso", "I", "%s: %s"
+              % ("Y14.5 tol" if units_of(self.cfg) == "asme_inch"
+                 else "ISO auto",
+                 "on" if (self.cfg.get("dp_on")
+                          if units_of(self.cfg) == "asme_inch"
+                          else self.last.get("iso_on")) else "off"),
               lambda: self.chk_iso.setChecked(not self.chk_iso.isChecked())),
             A("dec", "D", "Dec. tol: %s"
               % ("on" if self.cfg.get("dp_on") else "off"),
@@ -146,12 +151,12 @@ class HotbarMixin:
               % ("on" if self.use_leaders() else "off"),
               lambda: self.chk_lead.setChecked(not self.chk_lead.isChecked())),
             A("pin", "P", "Pin=Ø: %s"
-              % ("on" if self.cfg.get("hole_pin_auto", True) else "off"),
+              % ("on" if self.cfg.get("hole_pin_auto", False) else "off"),
               lambda: self._toggle_cfg("hole_pin_auto")),
             A("snap", "S", "Snap: %s"
               % ("on" if self.cfg.get("snap_geom", True) else "off"),
               lambda: self._toggle_cfg("snap_geom")),
-            A("tool_sel", "V", "Select tool / Zaznaczanie",
+            A("tool_sel", "V", tr('Select tool'),
               lambda: self.set_tool("select")),
             A("offset", u"←↑→↓", "Offset: %s"
               % self._OFF_LABEL.get(self.cfg.get("offset_dir", "auto"),

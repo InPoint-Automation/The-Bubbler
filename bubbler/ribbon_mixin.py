@@ -6,17 +6,18 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QComboBox, QCheckBox, QDoubleSpinBox,
-                               QToolBar, QSizePolicy)
+                               QSizePolicy)
 
-from .common import TYPES, GROUPS, TIERS
-from .icons import icon_button
+from .common import TYPES, GROUPS, TIERS, is_simple
+from .config import units_of
+from .widgets import fill_keyed, combo_key
+from .icons import icon_button, menu_button
 from .theme import OFFICE
 from .i18n import tr
 
 
 class RibbonMixin:
     def _rib_group(self, caption, widgets):
-        """Ribbon group: control row + caption beneath."""
         g = QWidget()
         g.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Expanding)
         v = QVBoxLayout(g)
@@ -43,39 +44,67 @@ class RibbonMixin:
         tb.setObjectName("ribbon")
         tb.setMovable(False)
         tb.setFloatable(False)
-        # checked state from Office stylesheet
         self.addToolBar(Qt.TopToolBarArea, tb)
 
-        # File
-        tb.addWidget(self._rib_group("File / Plik", [
+        tb.addWidget(self._rib_group(tr('File'), [
             icon_button("save", self.save, "Save  Ctrl+S", "Save"),
             icon_button("header", self.header_editor, "Header", "Header"),
-            icon_button("settings", self.settings, "Settings", "Setup"),
-            icon_button("help", self.show_keys, "Keybinds  F1", "Keys")]))
+            menu_button("settings", "Options", "Options", items=[
+                ("settings", "Settings", self.settings),
+                ("help", "Keybinds  F1", self.show_keys)])]))
         tb.addSeparator()
-        # View
-        tb.addWidget(self._rib_group("View / Widok", [
+        self.lbl_page = QLabel("1/1")
+        self.lbl_page.setAlignment(Qt.AlignCenter)
+        self.lbl_page.setToolTip(tr('Page'))
+        self.lbl_page.setProperty("i18n_skip", True)
+        self.lbl_page.setStyleSheet(
+            "font-size:8pt; font-weight:bold; color:%s; padding:0 3px;"
+            % OFFICE["accent"])
+        self.btn_nav = icon_button("pages", self.toggle_nav,
+                                   "Page navigator", "Pages", toggle=True)
+        self.btn_nav.setEnabled(self.doc.page_count > 1)
+        tb.addWidget(self._rib_group(tr('Page'), [
             icon_button("prev", lambda: self.flip(-1), "PgUp", "Prev"),
+            self.lbl_page,
             icon_button("next", lambda: self.flip(1), "PgDn", "Next"),
-            icon_button("fit", self.fit, "Fit  Home", "Fit"),
-            icon_button("zoom_in", lambda: self.rezoom(1.25), "Zoom +", "In"),
-            icon_button("zoom_out", lambda: self.rezoom(0.8), "Zoom -", "Out"),
-            icon_button("rotate", self.rotate, "Rotate", "Rot")]))
+            self.btn_nav]))
         tb.addSeparator()
-        # Bubble
+        tb.addWidget(self._rib_group(tr('View'), [
+            menu_button("zoom_in", "View controls", "View", items=[
+                ("fit", "Fit  Home", self.fit),
+                ("zoom_in", "Zoom in", lambda: self.rezoom(1.25)),
+                ("zoom_out", "Zoom out", lambda: self.rezoom(0.8)),
+                ("rotate", "Rotate", self.rotate)])]))
+        tb.addSeparator()
+        tb.addWidget(self._rib_group(tr('Align'), [
+            menu_button("align_h", "Align and distribute", "Align", items=[
+                ("align_h", "Align row", lambda: self.align_sel("h")),
+                ("align_v", "Align col", lambda: self.align_sel("v")),
+                ("dist_h", "Distribute H", lambda: self.distribute_sel("h")),
+                ("dist_v", "Distribute V", lambda: self.distribute_sel("v"))])]))
+        tb.addSeparator()
         self.btn_measure = icon_button("measure", self.toggle_measure,
                                        "Measure mode  M", "Measure",
                                        toggle=True)
         self.btn_panel = icon_button("panel", self.toggle_panel,
                                      "Bubble list  B", "List", toggle=True)
-        tb.addWidget(self._rib_group("Bubbles / Bąble", [
+        self.btn_scan = icon_button("scan", self.scan_page, "Scan page",
+                                    "Scan")
+        self.btn_scan_all = icon_button("scan", lambda: self.scan_page(True),
+                                        "Scan all pages", "Scan all")
+        tb.addWidget(self._rib_group(tr('Bubbles'), [
             icon_button("undo", self.undo, "Undo  Ctrl+Z", "Undo"),
             self.btn_measure, self.btn_panel,
-            icon_button("scan", self.scan_page, "Scan page", "Scan"),
-            icon_button("scan", lambda: self.scan_page(True),
-                        "Scan all pages", "Scan all")]))
+            self.btn_scan, self.btn_scan_all]))
         tb.addSeparator()
-        # Tool
+        tb.addWidget(self._rib_group(tr('Data'), [
+            menu_button("report", "Reports and data import", "Data", items=[
+                ("report", "OOT report", self.oot_report),
+                ("import", "Import CMM/CSV", self.cmm_import),
+                ("report", "Report bad read...", self.report_bad_read),
+                ("import", "Review corrections...",
+                 self.review_corrections)])]))
+        tb.addSeparator()
         self.btn_tool_add = icon_button("add", lambda: self.set_tool("add"),
                                         "Add bubbles  A", "Add", toggle=True)
         self.btn_tool_add.setChecked(True)
@@ -83,47 +112,34 @@ class RibbonMixin:
                                         lambda: self.set_tool("select"),
                                         "Select/move  V", "Select",
                                         toggle=True)
-        tb.addWidget(self._rib_group("Tools / Narzędzia",
+        tb.addWidget(self._rib_group(tr('Tools'),
                                      [self.btn_tool_add, self.btn_tool_sel]))
         tb.addSeparator()
-        # Arrange
-        tb.addWidget(self._rib_group("Arrange / Rozmieść", [
-            icon_button("align_h", lambda: self.align_sel("h"),
-                        "Align row", "Row"),
-            icon_button("align_v", lambda: self.align_sel("v"),
-                        "Align col", "Col"),
-            icon_button("dist_h", lambda: self.distribute_sel("h"),
-                        "Distribute H", "Dist H"),
-            icon_button("dist_v", lambda: self.distribute_sel("v"),
-                        "Distribute V", "Dist V")]))
-        tb.addSeparator()
 
-        # next bubble defaults
         self.cb_type = QComboBox()
-        self.cb_type.addItems(TYPES)
-        self.cb_type.setCurrentText(self.last["type"])
+        fill_keyed(self.cb_type, TYPES, self.last["type"])
         self.cb_type.setMaximumWidth(110)
         self.cb_type.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.cb_type.activated.connect(
-            lambda _i: self._rib_set("type", self.cb_type.currentText(),
+            lambda _i: self._rib_set("type", combo_key(self.cb_type),
                                      group=True))
         self.cb_group = QComboBox()
-        self.cb_group.addItems(GROUPS)
-        self.cb_group.setCurrentText(self.last["group"])
+        fill_keyed(self.cb_group, GROUPS, self.last["group"])
         self.cb_group.setMaximumWidth(120)
         self.cb_group.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.cb_group.activated.connect(
-            lambda _i: self._rib_set("group", self.cb_group.currentText()))
+            lambda _i: self._rib_set("group", combo_key(self.cb_group)))
 
         self.chk_iso = QCheckBox("ISO 2768")
-        self.chk_iso.setToolTip("ISO 2768 auto")
-        self.chk_iso.setChecked(bool(self.cfg.get("rib_iso_on")))
         self.chk_iso.toggled.connect(self._iso_changed)
         self.cb_icls = QComboBox()
         self.cb_icls.addItems(["f", "m", "c", "v"])
         self.cb_icls.setCurrentText(self.last["icls"])
+        self.cb_icls.setMaximumWidth(48)
         self.cb_icls.activated.connect(self._icls_changed)
-        isow = self._field("iso class", self.cb_icls, top=self.chk_iso)
+        self._iso_field = self._field("", self.chk_iso)
+        self._icls_field = self._field("class", self.cb_icls)
+        self._sync_units_controls()
 
         self.e_tsym = QLineEdit()
         self.e_tsym.setMaximumWidth(60)
@@ -143,18 +159,18 @@ class RibbonMixin:
         self.cb_tier.setMaximumWidth(70)
         self.cb_tier.activated.connect(
             lambda _i: self._rib_set("tier", self.cb_tier.currentText()))
-        tb.addWidget(self._rib_group("Next bubble / Następny", [
-            self._field("type / typ", self.cb_type),
-            self._field("group / grupa", self.cb_group),
-            isow,
+        tb.addWidget(self._rib_group(tr('Next bubble'), [
+            self._field(tr('type'), self.cb_type),
+            self._field(tr('group'), self.cb_group),
+            self._iso_field,
+            self._icls_field,
             self._field("tol ±", self.e_tsym),
             self._field("tol max", self.e_tmax),
             self._field("tol min", self.e_tmin),
             self._field("tier", self.cb_tier)]))
         tb.addSeparator()
 
-        # bubble style
-        self.chk_lead = QCheckBox("Leaders / Linie")
+        self.chk_lead = QCheckBox(tr('Leaders'))
         self.chk_lead.setChecked(bool(self.cfg.get("leaders")))
         self.chk_lead.toggled.connect(self._lead_changed)
         self.sp_rad = QDoubleSpinBox()
@@ -169,13 +185,36 @@ class RibbonMixin:
         self.sp_fsz.setValue(float(self.cfg.get("fontsz", 10)))
         self.sp_fsz.valueChanged.connect(
             lambda v: self._style_set("fontsz", v))
-        tb.addWidget(self._rib_group("Style / Styl", [
+        tb.addWidget(self._rib_group(tr('Style'), [
             self._field("", self.chk_lead),
             self._field("radius", self.sp_rad),
             self._field("font", self.sp_fsz)]))
+        self._apply_mode()
+
+    def _apply_mode(self):
+        simple = is_simple(self.cfg)
+        for b in (getattr(self, "btn_scan", None),
+                  getattr(self, "btn_scan_all", None)):
+            if b is not None:
+                b.setVisible(not simple)
+
+    def _sync_units_controls(self):
+        asme = units_of(self.cfg) == "asme_inch"
+        if asme:
+            src, tip = "Y14.5 tol", "ASME title-block decimal-place tolerance"
+            on = bool(self.cfg.get("dp_on"))
+        else:
+            src, tip = "ISO 2768", "ISO 2768 auto"
+            on = bool(self.cfg.get("rib_iso_on"))
+        self.chk_iso.setProperty("i18n_src", src)
+        self.chk_iso.setText(tr(src))
+        self.chk_iso.setToolTip(tr(tip))
+        self.chk_iso.blockSignals(True)
+        self.chk_iso.setChecked(on)
+        self.chk_iso.blockSignals(False)
+        self._icls_field.setVisible(not asme)
 
     def _field(self, label, widget, top=None):
-        """Captioned ribbon control: label above widget."""
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(2, 0, 2, 0)

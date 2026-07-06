@@ -7,12 +7,13 @@ import re
 
 from PySide6.QtWidgets import QMenu, QInputDialog, QMessageBox
 
-from .common import base_of, fnum, dp_tol
-from .config import save_cfg
+from .common import base_of, fnum, dp_tol, tier_for_type
+from .config import save_cfg, units_of
 from .iso286 import fit_limits, is_fit_code
 from .iso2768 import iso2768_tol
 from .scanlib import expand_hole_row, scan_parse, scan_normalize
 from .dialogs import BubbleDialog
+from .i18n import tr
 
 
 class BubbleMixin:
@@ -44,12 +45,13 @@ class BubbleMixin:
                   else (x, y))
         uid = self.store.new_uid()
         for d in dlg.result_rows:
-            # already expanded
             rows = [d] if d.pop("_expanded", False) \
                 else expand_hole_row(d, self.cfg)
             for rr in rows:
                 if not rr.get("gage"):
                     rr["gage"] = self.suggest(rr)
+                rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
+                                           rr.get("tier", ""))
                 rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
                            "bx": bx, "by": by, "sheet_row": None})
                 self.ledger.append(rr)
@@ -86,7 +88,6 @@ class BubbleMixin:
             self.toggle_panel()
         for i, d in enumerate(self.ledger):
             if base_of(d["bubble"]) == basenum:
-                # mute: don't recurse
                 self._panel_highlight(i, scroll=True, mute=True)
                 return
 
@@ -100,13 +101,13 @@ class BubbleMixin:
         nxt = self.store.next_number(self.page_i)
         s, ok = QInputDialog.getText(
             self, "Bubble #%d" % nxt,
-            "Nominal (sticky values / jak poprzednio):")
+            tr('Nominal (sticky values'))
         if not ok:
             return
         try:
             nom = fnum(s)
         except ValueError:
-            QMessageBox.critical(self, "Error / Błąd", "Bad number: %s" % s)
+            QMessageBox.critical(self, tr('Error'), "Bad number: %s" % s)
             return
         self._commit_sticky_bubble(p, nom, dp_src=s)
 
@@ -121,7 +122,6 @@ class BubbleMixin:
             feat = "%.2f" % nom
         else:
             feat = ""
-        # pin lands on X/Y rows
         pin = fnum(self.last.get("pin", "") or "")
         d = {"bubble": str(nxt), "type": t,
              "group": self.last.get("group", ""), "feature": feat,
@@ -131,7 +131,8 @@ class BubbleMixin:
         tmax = fnum(self.last.get("tmax", ""))
         tmin = fnum(self.last.get("tmin", ""))
         raw_sym = str(self.last.get("tsym", "") or "").strip()
-        if is_fit_code(raw_sym):
+        metric = units_of(self.cfg) == "iso_mm"
+        if metric and is_fit_code(raw_sym):
             lim = fit_limits(nom, raw_sym) if nom is not None else None
             if lim is None:
                 QMessageBox.critical(
@@ -147,16 +148,15 @@ class BubbleMixin:
             try:
                 d["tol_sym"] = fnum(raw_sym)
             except ValueError:
-                QMessageBox.critical(self, "Error / Błąd",
+                QMessageBox.critical(self, tr('Error'),
                                      "Bad tolerance: %s" % raw_sym)
                 return
-        elif self.last.get("iso_on"):
+        elif metric and self.last.get("iso_on"):
             t2 = iso2768_tol(nom, self.last.get("icls", "m"))
             if t2 is None:
-                QMessageBox.critical(self, "ISO 2768",
-                                     "Out of table / poza tabelą.")
-                return
-            d["tol_sym"] = t2
+                t2 = dp_tol(dp_src, self.cfg)
+            if t2 is not None:
+                d["tol_sym"] = t2
         else:
             t2 = dp_tol(dp_src, self.cfg)
             if t2 is not None:
@@ -168,11 +168,12 @@ class BubbleMixin:
         d["leader"] = self.use_leaders()
         self.snapshot()
         uid = self.store.new_uid()
-        # hole expands to Ø + X/Y rows
         for rr in expand_hole_row(d, self.cfg):
             if not rr.get("gage"):
                 rr["gage"] = self.suggest(rr)
             rr.setdefault("leader", self.use_leaders())
+            rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
+                                       rr.get("tier", ""))
             rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
                        "bx": bx, "by": by, "sheet_row": None})
             self.ledger.append(rr)
@@ -185,7 +186,6 @@ class BubbleMixin:
         """Read numeric nominal from PDF text at page-point p."""
         px, py = p
         box = self._capture_box(px, py)
-        # off-thread vision read, no meta short-circuit
         res = self._run_capture(self.page_i, box, box,
                                 want_meta=False, want_hits=True)
         if res is None:
@@ -196,7 +196,7 @@ class BubbleMixin:
         text = res["text"]
         hits = res["hits"] or []
         if not hits:
-            hits = scan_parse(scan_normalize(text))
+            hits = scan_parse(scan_normalize(text), self.cfg)
         src = str(hits[0].get("v")) if hits and hits[0].get("v") else \
             scan_normalize(text)
         m = re.search(r"\d+(?:[.,]\d+)?", src)
@@ -208,7 +208,6 @@ class BubbleMixin:
             return None, ""
 
     def on_alt_shift_click(self, sp):
-        # quick capture, no dialog
         self._swallow = True
         if self.measure_mode:
             return
@@ -217,10 +216,10 @@ class BubbleMixin:
             return
         nom, src = self._capture_nominal(p)
         if nom is None:
-            self.set_status("no number here / brak liczby")
+            self.set_status(tr('no number here'))
             return
         self._commit_sticky_bubble(p, nom, dp_src=src)
-        self.set_status("captured %s / przechwycono" % src)
+        self.set_status(tr('captured %s') % src)
 
     def on_ctrl_click(self, sp):
         self._swallow = True
@@ -258,12 +257,11 @@ class BubbleMixin:
         bases = self._sel_bases()
         if not bases:
             return
-        # confirm multi-delete only
         if len(bases) > 1 and QMessageBox.question(
                 self, "Delete / Usuń",
-                "Delete %d selected bubble(s)? / Usunąć zaznaczone?"
+                tr('Delete %d selected bubble(s)?')
                 % len(bases)) != QMessageBox.Yes:
             return
         n = len(bases)
         self._delete_bases(bases)
-        self.set_status("deleted %d / usunięto - Ctrl+Z" % n)
+        self.set_status(tr('deleted %d') % n)

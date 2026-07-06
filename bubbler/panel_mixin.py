@@ -13,11 +13,12 @@ from .common import base_of
 from .config import save_cfg, CFG_DEFAULT
 from .panel_model import (BubbleTableModel, BubbleFilterProxy,
                           PANEL_COLS, INLINE_COLS)
+from .i18n import tr
 
 
 class PanelMixin:
     def _build_panel(self):
-        self.dock = QDockWidget("Bubbles / Bąble", self)
+        self.dock = QDockWidget(tr('Bubbles'), self)
         self.dock.setAllowedAreas(Qt.RightDockWidgetArea)
         self.dock.setFeatures(QDockWidget.DockWidgetClosable |
                               QDockWidget.DockWidgetMovable)
@@ -25,9 +26,9 @@ class PanelMixin:
         lay = QVBoxLayout(body)
         lay.setContentsMargins(2, 2, 2, 2)
         bar = QHBoxLayout()
-        bar.addWidget(QLabel("Bubbles / Bąble"))
+        bar.addWidget(QLabel(tr('Bubbles')))
         self.panel_filter = QLineEdit()
-        self.panel_filter.setPlaceholderText("filter / filtr...")
+        self.panel_filter.setPlaceholderText(tr('filter'))
         self.panel_filter.setClearButtonEnabled(True)
         self.panel_filter.textChanged.connect(self._filter_rows)
         bar.addWidget(self.panel_filter, 1)
@@ -36,7 +37,6 @@ class PanelMixin:
         bar.addWidget(cols_btn)
         lay.addLayout(bar)
 
-        # store-backed model -> proxy -> view
         self._model = BubbleTableModel(self.store, self)
         self._proxy = BubbleFilterProxy(self)
         self._proxy.setSourceModel(self._model)
@@ -46,7 +46,6 @@ class PanelMixin:
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        # source rows == ledger indices
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
@@ -55,7 +54,6 @@ class PanelMixin:
         self.table.doubleClicked.connect(self._panel_double)
         self.table.selectionModel().selectionChanged.connect(
             self._panel_select)
-        # Del on table, not canvas
         del_sc = QShortcut(QKeySequence.Delete, self.table)
         del_sc.setContext(Qt.WidgetShortcut)
         del_sc.activated.connect(self._panel_delete)
@@ -75,21 +73,18 @@ class PanelMixin:
             self._proxy.set_filter(self.panel_filter.text())
 
     def _row_to_ledger(self, view_row):
-        """Proxy row -> ledger index, -1 if gone."""
         if view_row < 0:
             return -1
         src = self._proxy.mapToSource(self._proxy.index(view_row, 0))
         return src.row() if src.isValid() else -1
 
     def _ledger_to_row(self, ledger_idx):
-        """Ledger index -> proxy row, -1 if filtered out."""
         if ledger_idx < 0 or ledger_idx >= self._model.rowCount():
             return -1
         pr = self._proxy.mapFromSource(self._model.index(ledger_idx, 0))
         return pr.row() if pr.isValid() else -1
 
     def _panel_highlight(self, ledger_idx, scroll=True, mute=False):
-        """Select panel row for a ledger index."""
         if not hasattr(self, "table"):
             return
         vr = self._ledger_to_row(ledger_idx)
@@ -157,7 +152,6 @@ class PanelMixin:
     def refresh_panel(self):
         if not hasattr(self, "_model"):
             return
-        # full re-pull; proxy re-sorts
         self._model.refresh()
         if self.measure_mode:
             self._walk_build()
@@ -172,7 +166,6 @@ class PanelMixin:
         d = self.ledger[idx]
         if d.get("page") != self.page_i:
             return
-        # mirror selection to canvas
         self.sel = {d["uid"]}
         bx, by = d.get("bx", d["x"]), d.get("by", d["y"])
         self._flash_ring = (self.page_i, bx, by)
@@ -190,7 +183,7 @@ class PanelMixin:
         idx = self._row_to_ledger(rows[0].row())
         if 0 <= idx < len(self.ledger):
             self._delete_bases([base_of(self.ledger[idx]["bubble"])])
-            self.set_status("deleted / usunięto - Ctrl+Z")
+            self.set_status(tr('deleted'))
 
     def _clear_flash(self):
         self._flash_ring = None

@@ -2,3 +2,5 @@
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
 # Bubbler package root.
+
+from .common import VERSION as __version__

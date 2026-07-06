@@ -9,6 +9,7 @@ import sys
 from openpyxl import load_workbook
 
 from .common import SHEET, FIRST_ROW, LAST_ROW
+from .i18n import sheet_value
 
 HEADER_FIELDS = [
     ("B3", "Part #"), ("E3", "Part Name / Nazwa"), ("H3", "FAIR #"),
@@ -19,22 +20,33 @@ HEADER_FIELDS = [
 ]
 
 
-def ensure_xlsx(path, company=""):
-    if os.path.isfile(path):
-        return False
+def _template_b64(sheet_lang):
+    try:
+        from .sheet_template import TEMPLATES
+        return (TEMPLATES.get(sheet_lang) or TEMPLATES.get("both")
+                or next(iter(TEMPLATES.values())))
+    except ImportError:
+        pass
     try:
         from .sheet_template import TEMPLATE_B64
+        return TEMPLATE_B64
     except ImportError:
         raise RuntimeError(
             "bubbler/sheet_template.py missing - run "
-            "template/make_template_module.py or place the xlsx at %s" % path)
+            "template/make_template_module.py")
+
+
+def ensure_xlsx(path, company="", sheet_lang="both"):
+    if os.path.isfile(path):
+        return False
     with open(path, "wb") as f:
-        f.write(base64.b64decode(TEMPLATE_B64))
+        f.write(base64.b64decode(_template_b64(sheet_lang)))
     if company:
         try:
             wb = load_workbook(path)
             ws = wb[SHEET]
-            ws["A1"] = "%s - Inspection Sheet / Karta kontroli" % company
+            ws["A1"] = "%s - %s" % (
+                company, sheet_value("Inspection Sheet", sheet_lang))
             wb.save(path)
         except Exception as e:
             print("bubbler: could not set company header (%s)" % e,
@@ -49,8 +61,11 @@ class SheetWriter(object):
             ("L", "measured"), ("N", "tier"), ("O", "gage"))
     NUMCOLS = {"E", "F", "G", "H", "I", "J"}
 
-    def __init__(self, path):
+    LOC_COLS = {"type", "group"}
+
+    def __init__(self, path, sheet_lang="both"):
         self.path = path
+        self.sheet_lang = sheet_lang or "both"
         self.wb = load_workbook(path)
         if SHEET not in self.wb.sheetnames:
             raise ValueError("No '%s' sheet in %s" % (SHEET, path))
@@ -73,6 +88,8 @@ class SheetWriter(object):
     def write_row(self, r, d):
         for col, key in self.COLS:
             v = d.get(key, None)
+            if key in self.LOC_COLS and v not in (None, ""):
+                v = sheet_value(str(v), self.sheet_lang)
             if v in (None, ""):
                 self.ws["%s%d" % (col, r)] = None
             elif col in self.NUMCOLS:
@@ -93,7 +110,6 @@ class SheetWriter(object):
             self.ws["%s%d" % (col, r)] = None
 
     def save(self):
-        # write-then-replace, crash-safe
         tmp = self.path + ".tmp"
         self.wb.save(tmp)
         try:

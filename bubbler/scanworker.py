@@ -13,10 +13,7 @@ from .scanlib import scan_normalize, scan_parse, parse_general_tols
 from .scanpos import scan_words, page_words
 
 
-# Pure passes
-
 def _aug_words(doc, page_i, cfg, cache):
-    """Page words plus vision-recovered words, cached per page."""
     page = doc[page_i]
     if not cfg.get("vision_assist"):
         return page_words(page)
@@ -32,7 +29,6 @@ def _aug_words(doc, page_i, cfg, cache):
 
 
 def _scan_hits(doc, page_i, cfg, words, include_bare=True, allow_vlm=True):
-    """Vision hits, else scan_words fallback."""
     try:
         hits = vision.extract_hits(doc[page_i], cfg, rect=None,
                                    include_bare=include_bare, words=words,
@@ -41,11 +37,10 @@ def _scan_hits(doc, page_i, cfg, words, include_bare=True, allow_vlm=True):
             return hits
     except Exception as e:
         print("bubbler: extract_hits skipped (%s)" % e, file=sys.stderr)
-    return scan_words(words, include_bare=include_bare)
+    return scan_words(words, include_bare=include_bare, cfg=cfg)
 
 
 def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
-    """Scan passes over `pages`. None if cancelled."""
     found = []
     gtols = {}
     vwords = {}
@@ -54,38 +49,39 @@ def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
     for i, pg in enumerate(pages):
         if cancelled is not None and cancelled():
             return None
-        page = doc[pg]
         try:
-            gtols[pg] = parse_general_tols(page.get_text("text"))
-        except Exception:
-            gtols[pg] = {}
-        words = _aug_words(doc, pg, cfg, vwords)
-        if words:
-            any_text = True
-            pos_hits = _scan_hits(doc, pg, cfg, words)
-            if pos_hits:
-                found.extend((pg, h) for h in pos_hits)
-                if progress is not None:
-                    progress(i + 1, total)
-                continue
-        try:
-            raw = page.get_text("text")
-        except Exception:
-            raw = ""
-        if raw.strip():
-            any_text = True
-            for h in scan_parse(scan_normalize(raw)):
-                found.append((pg, h))
+            page = doc[pg]
+            try:
+                gtols[pg] = parse_general_tols(page.get_text("text"))
+            except Exception:
+                gtols[pg] = {}
+            words = _aug_words(doc, pg, cfg, vwords)
+            if words:
+                any_text = True
+                pos_hits = _scan_hits(doc, pg, cfg, words)
+                if pos_hits:
+                    found.extend((pg, h) for h in pos_hits)
+                    if progress is not None:
+                        progress(i + 1, total)
+                    continue
+            try:
+                raw = page.get_text("text")
+            except Exception:
+                raw = ""
+            if raw.strip():
+                any_text = True
+                for h in scan_parse(scan_normalize(raw), cfg):
+                    found.append((pg, h))
+        except Exception as e:
+            print("bubbler: page %d scan skipped (%s)" % (pg, e),
+                  file=sys.stderr)
         if progress is not None:
             progress(i + 1, total)
     return {"found": found, "gtols": gtols, "any_text": any_text,
             "vwords": vwords}
 
 
-# Single-region capture
-
 def _words_in_rect(words, rx0, ry0, rx1, ry1):
-    """Words overlapping the capture rect."""
     out = []
     for w in words:
         wx0, wy0, wx1, wy1 = w[0], w[1], w[2], w[3]
@@ -101,7 +97,6 @@ def _words_in_rect(words, rx0, ry0, rx1, ry1):
 
 
 def _words_text(words):
-    """Reading-order text of the words."""
     words = sorted(words, key=lambda w: (w[5], w[6], w[7]))
     lines, key = [], None
     for w in words:
@@ -114,7 +109,6 @@ def _words_text(words):
 
 
 def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits):
-    """Vision passes for one region. Meta short-circuits hits."""
     vcache = {}
     words = _aug_words(doc, page_i, cfg, vcache)
     sel = _words_in_rect(words, *sel_rect)
@@ -139,28 +133,25 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits):
         except Exception as e:
             print("bubbler: extract_hits skipped (%s)" % e, file=sys.stderr)
         if hits is None:
-            hits = scan_words(sel, include_bare=True)
+            hits = scan_words(sel, include_bare=True, cfg=cfg)
         out["hits"] = hits
     return out
 
 
-# Qt worker
-
 class _Signals(QObject):
-    progress = Signal(int, int)    # pages done, total
-    done = Signal(object)          # result dict, or None if cancelled
+    progress = Signal(int, int)
+    done = Signal(object)
     failed = Signal(str)
 
 
 class ScanTask(QRunnable):
-    """Runs scan_pages on a pool thread against its own fitz.Document."""
 
     def __init__(self, pdf_path, cfg, pages, cancelled):
         super().__init__()
         self.pdf_path = pdf_path
         self.cfg = cfg
         self.pages = pages
-        self._cancelled = cancelled    # callable -> bool, polled per page
+        self._cancelled = cancelled
         self.signals = _Signals()
 
     def run(self):
@@ -178,13 +169,34 @@ class ScanTask(QRunnable):
                 doc.close()
 
 
+class _PrewarmSignals(QObject):
+    done = Signal()
+
+
+class PrewarmTask(QRunnable):
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.signals = _PrewarmSignals()
+
+    def run(self):
+        try:
+            vision.prewarm(self.cfg)
+        except Exception:
+            pass
+        try:
+            self.signals.done.emit()
+        except RuntimeError:
+            pass
+
+
 class _CaptureSignals(QObject):
     done = Signal(object)
     failed = Signal(str)
 
 
 class CaptureTask(QRunnable):
-    """Runs capture_region on a pool thread against its own fitz.Document."""
 
     def __init__(self, pdf_path, cfg, page_i, rect, sel_rect, want_meta,
                  want_hits):

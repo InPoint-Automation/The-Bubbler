@@ -50,17 +50,16 @@ class CaptureMixin:
         if rx1 - rx0 < 3 and ry1 - ry0 < 3:
             mx, my = (rx0 + rx1) / 2.0, (ry0 + ry1) / 2.0
             rx0, ry0, rx1, ry1 = self._capture_box(mx, my)
-        # read off-thread
         rect = (rx0, ry0, rx1, ry1)
         sel_rect = (rx0 - 2, ry0 - 2, rx1 + 2, ry1 + 2)
         want_hits = (not self.measure_mode) and (self._hdr_focus is None)
         res = self._run_capture(self.page_i, rect, sel_rect,
                                 want_meta=want_hits, want_hits=want_hits)
-        if res is None:    # cancelled / failed
+        if res is None:
             return
         sel = res["sel"]
         if not sel:
-            self.set_status("no text here / brak tekstu")
+            self.set_status(tr('no text here'))
             return
         text = res["text"]
         QApplication.clipboard().setText(" ".join(text.split()))
@@ -69,21 +68,19 @@ class CaptureMixin:
                 self._hdr_focus.setText(" ".join(text.split()))
             except RuntimeError:
                 self._hdr_focus = None
-            self.set_status("copied / skopiowano: %s" % text[:50])
+            self.set_status(tr('copied: %s') % text[:50])
             return
         if not self.measure_mode:
-            # meta region, no bubble
             meta = res["meta"]
             if meta:
-                en, pl = {"gentol_block": ("general tolerance",
-                                           "tolerancja ogólna"),
-                          "note": ("note", "uwaga")}.get(meta, (meta, meta))
-                self.set_status("%s - no bubble (Alt-click to add) / "
-                                "%s - bez bąbla (Alt-klik)" % (en, pl))
+                name = {"gentol_block": tr('general tolerance'),
+                        "note": tr('note')}.get(meta, tr(meta))
+                self.set_status(tr('%s - no bubble (Alt-click to add)')
+                                % name)
                 return
             hits = res["hits"] or []
             if not hits:
-                hits = scan_parse(scan_normalize(text))
+                hits = scan_parse(scan_normalize(text), self.cfg)
                 for h in hits:
                     h["rect"] = (rx0, ry0, rx1, ry1)
             if not hits:
@@ -96,7 +93,7 @@ class CaptureMixin:
             if len(hits) == 1:
                 hr = hits[0].get("rect") or (rx0, ry0, rx1, ry1)
                 ax, ay = self._hit_anchor_pt(hits[0], (rx0, ry0, rx1, ry1))
-                self.set_status("captured / przechwycono: %s" % text[:50])
+                self.set_status(tr('captured: %s') % text[:50])
                 self._new_bubble_at(ax, ay, None,
                                     prefill=self._capture_prefill(hits[0],
                                                                   gtols),
@@ -105,14 +102,13 @@ class CaptureMixin:
             if len(hits) > 1:
                 cx, cy = (rx0 + rx1) / 2.0, (ry0 + ry1) / 2.0
                 m = QMenu(self)
-                # confirm before spawning rows
                 m.addAction(
-                    "Review %d callouts... / Przegląd" % len(hits),
+                    tr('Review %d callouts...') % len(hits),
                     lambda: ScanReview(
                         self, [(self.page_i, h) for h in hits],
                         {self.page_i: gtols}, False).exec())
                 m.addAction(
-                    "All %d as sub-rows / Wszystkie jako podwiersze"
+                    tr('All %d as sub-rows')
                     % len(hits),
                     lambda: self._balloon_from_rows(
                         [self._capture_full_row(h, gtols) for h in hits],
@@ -129,11 +125,11 @@ class CaptureMixin:
                                     ax, ay, None,
                                     prefill=self._capture_prefill(h, gtols),
                                     rect=hr))
-                self.set_status("captured %d callouts / przechwycono"
+                self.set_status(tr('captured %d callouts')
                                 % len(hits))
                 m.exec(gpos.toPoint())
                 return
-        self.set_status("copied / skopiowano: %s" % text[:50])
+        self.set_status(tr('copied: %s') % text[:50])
 
     def _page_gtols(self, page_i=None):
         if page_i is None:
@@ -160,18 +156,13 @@ class CaptureMixin:
         rw = scan_to_row(h)
         self._apply_general_tol(rw, h, gtols)
         if h.get("sb") == "BARE":
-            t = self.last.get("type", "dim")
+            t = "dim"
             rw["type"] = t
             rw["group"] = GROUP_OF.get(t, rw.get("group", ""))
             rw["tier"] = self.last.get("tier", "")
-            nom = rw.get("nominal")
-            if nom is not None and t.startswith(("hole", "thru")):
-                rw["feature"] = u"Ø%.3f" % nom
-                # pin set at commit
         return rw
 
     def _capture_box(self, cx, cy):
-        """Sample box around a single-click point, sized by capture_radius."""
         try:
             hw = float(self.cfg.get("capture_radius",
                                     CFG_DEFAULT["capture_radius"]))
@@ -182,7 +173,6 @@ class CaptureMixin:
         return cx - hw, cy - hh, cx + hw, cy + hh
 
     def _aug_words(self, page_i=None):
-        """Page words plus vision-recovered symbols, cached per page."""
         if page_i is None:
             page_i = self.page_i
         page = self.doc[page_i]
@@ -197,7 +187,6 @@ class CaptureMixin:
             except Exception as e:
                 print("bubbler: vision assist skipped (%s)" % e,
                       file=sys.stderr)
-            # Report what vision changed.
             added = len(words) - len(base)
             edited = sum(1 for a, b in zip(words, base) if a[4] != b[4])
             print("bubbler.vision: page %d: %d text words, +%d recovered, "
@@ -207,20 +196,18 @@ class CaptureMixin:
         return cache[page_i]
 
     def _run_capture(self, page_i, rect, sel_rect, want_meta, want_hits):
-        """Run capture passes off-thread so UI never freezes."""
         if getattr(self, "_cap_loop", None) is not None:
-            return None    # capture already in flight
+            return None
         self._cap_loop = QEventLoop()
         self._cap_state = {}
         dlg = QProgressDialog(
-            tr("Reading callout... / Odczyt..."), tr("Cancel / Anuluj"),
+            tr('Reading callout...'), tr('Cancel'),
             0, 0, self)
-        dlg.setWindowTitle(tr("Capture / Przechwyć"))
+        dlg.setWindowTitle(tr('Capture'))
         dlg.setWindowModality(Qt.ApplicationModal)
-        dlg.reset()    # fast read never flashes it
+        dlg.reset()
         dlg.canceled.connect(self._cap_cancel)
         self._cap_dlg = dlg
-        # bind by value, may be None by now
         QTimer.singleShot(
             200, lambda st=self._cap_state, d=dlg:
             None if "done" in st else d.show())
@@ -231,7 +218,6 @@ class CaptureMixin:
         task.signals.failed.connect(self._cap_failed)
         QThreadPool.globalInstance().start(task)
         self._cap_loop.exec()
-        # drop handler so completion isn't a cancel
         try:
             dlg.canceled.disconnect(self._cap_cancel)
         except (RuntimeError, TypeError):
@@ -242,11 +228,11 @@ class CaptureMixin:
         self._cap_state = None
         self._cap_dlg = None
         if state.get("cancel"):
-            self.set_status("capture cancelled / anulowano")
+            self.set_status(tr('capture cancelled'))
             return None
         if "error" in state:
-            QMessageBox.warning(self, "Capture / Przechwyć",
-                                "Capture failed / Nieudane:\n%s"
+            QMessageBox.warning(self, tr('Capture'),
+                                tr('Capture failed: %s')
                                 % state["error"])
             return None
         r = state.get("result")
@@ -255,7 +241,7 @@ class CaptureMixin:
         return r
 
     def _cap_done(self, r):
-        if self._cap_state is None:    # late delivery
+        if self._cap_state is None:
             return
         self._cap_state["done"] = True
         self._cap_state["result"] = r
@@ -269,7 +255,6 @@ class CaptureMixin:
         self._cap_loop.quit()
 
     def _cap_cancel(self):
-        # only an in-flight read counts
         st = self._cap_state
         if st is None or st.get("done"):
             return

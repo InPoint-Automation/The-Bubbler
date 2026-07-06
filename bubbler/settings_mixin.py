@@ -3,12 +3,14 @@
 #
 # Keybind help, header editor, Settings dialog. Mixed into MainWindow.
 
-from PySide6.QtCore import Qt
+import os
+
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QComboBox,
-                               QCheckBox, QPushButton, QMessageBox)
+                               QCheckBox, QPushButton, QMessageBox,
+                               QTabWidget, QScrollArea, QFileDialog)
 
-from .common import TYPES, TIERS
+from .common import TYPES, TIERS, SHAPES
 from .config import save_cfg, CFG_DEFAULT
 from .sheet import HEADER_FIELDS
 from .scanlib import GAGES
@@ -21,7 +23,7 @@ class SettingsMixin:
     def show_keys(self):
         from PySide6.QtWidgets import QTextBrowser
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("Keybinds / Skróty"))
+        dlg.setWindowTitle(tr('Keybinds'))
         lay = QVBoxLayout(dlg)
         view = QTextBrowser()
         view.setOpenExternalLinks(False)
@@ -35,7 +37,7 @@ class SettingsMixin:
         dlg.resize(620, 660)
         dlg.exec()
 
-    def header_editor(self):
+    def header_editor(self, prefill=None):
         if self._hdr_win is not None:
             try:
                 self._hdr_win.raise_()
@@ -44,17 +46,18 @@ class SettingsMixin:
             except RuntimeError:
                 self._hdr_win = None
         win = QDialog(self)
-        win.setWindowTitle(tr("Header / Nagłówek"))
+        win.setWindowTitle(tr('Header'))
         self._hdr_win = win
         g = QGridLayout(win)
         current = self.writer.get_header()
+        prefill = prefill or {}
         entries = {}
         for i, (cell, label) in enumerate(HEADER_FIELDS):
             hlab = QLabel(label)
-            hlab.setProperty("i18n_skip", True)  # bilingual sheet
+            hlab.setProperty("i18n_skip", True)
             g.addWidget(hlab, i, 0)
-            e = QLineEdit(str(current.get(cell, "")))
-            # drag-fill target
+            seed = prefill[cell] if cell in prefill else current.get(cell, "")
+            e = QLineEdit(str(seed))
             e.focusInEvent = (lambda ev, ent=e:
                               (setattr(self, "_hdr_focus", ent),
                                QLineEdit.focusInEvent(ent, ev)))
@@ -66,18 +69,35 @@ class SettingsMixin:
             try:
                 self.writer.save()
             except Exception as ex:
-                QMessageBox.critical(win, "Sheet error / Błąd", str(ex))
+                QMessageBox.critical(win, tr('Sheet error'), str(ex))
                 return
-            self.set_status("header saved / nagłówek zapisany")
+            self.set_status(tr('header saved'))
+
+        def rescan():
+            try:
+                page = self.doc[self.page_i]
+            except Exception:
+                return
+            parsed = self._read_titleblock(self.page_i,
+                                           self._titleblock_rect(page))
+            for cell, val in parsed.items():
+                e = entries.get(cell)
+                if e is not None:
+                    e.setText(str(val))
+            if parsed:
+                self.set_status(tr('title block scanned'))
 
         nrow = len(HEADER_FIELDS)
         bw = QWidget()
         bl = QHBoxLayout(bw)
-        b_apply = QPushButton("Apply / Zastosuj")
+        b_apply = QPushButton(tr('Apply'))
         b_apply.clicked.connect(apply)
-        b_close = QPushButton("Close / Zamknij")
+        b_scan = QPushButton(tr('Scan title block'))
+        b_scan.clicked.connect(rescan)
+        b_close = QPushButton(tr('Close'))
         b_close.clicked.connect(win.close)
         bl.addWidget(b_apply)
+        bl.addWidget(b_scan)
         bl.addWidget(b_close)
         g.addWidget(bw, nrow, 0, 1, 2)
         tip = QLabel("Tip: drag on the PDF fills the focused field")
@@ -91,11 +111,26 @@ class SettingsMixin:
 
     def settings(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle("Settings / Ustawienia")
-        g = QGridLayout(dlg)
+        dlg.setWindowTitle(tr('Settings'))
+        outer = QVBoxLayout(dlg)
+        tabs = QTabWidget()
+        outer.addWidget(tabs)
+
+        def _page(title):
+            page = QWidget()
+            grid = QGridLayout(page)
+            grid.setColumnStretch(1, 1)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.NoFrame)
+            scroll.setWidget(page)
+            tabs.addTab(scroll, tr(title))
+            return grid
+
         vars_ = {}
+        g = _page("General")
         r = 0
-        g.addWidget(QLabel("Language / Język"), r, 0)
+        g.addWidget(QLabel(tr('Language')), r, 0)
         cb_lang = QComboBox()
         cb_lang.addItem("English", "en")
         cb_lang.addItem("Polski", "pl")
@@ -103,21 +138,48 @@ class SettingsMixin:
             1 if self.cfg.get("language", "en") == "pl" else 0)
         g.addWidget(cb_lang, r, 1)
         r += 1
-        for label, key in (("Company / Firma", "company"),
-                           ("Accent color / Kolor", "icon_color"),
+        g.addWidget(QLabel(tr('Mode')), r, 0)
+        cb_mode = QComboBox()
+        cb_mode.addItem(tr('Advanced'), "advanced")
+        cb_mode.addItem(tr('Simple'), "simple")
+        cb_mode.setCurrentIndex(
+            1 if self.cfg.get("mode") == "simple" else 0)
+        g.addWidget(cb_mode, r, 1)
+        r += 1
+        g.addWidget(QLabel(tr('Units')), r, 0)
+        cb_units = QComboBox()
+        cb_units.addItem("ISO (mm)", "iso_mm")
+        cb_units.addItem("ASME (inch)", "asme_inch")
+        cb_units.setCurrentIndex(
+            1 if self.cfg.get("units") == "asme_inch" else 0)
+        g.addWidget(cb_units, r, 1)
+        r += 1
+        g.addWidget(QLabel(tr('Sheet language')), r, 0)
+        cb_sheet = QComboBox()
+        cb_sheet.addItem("EN + PL", "both")
+        cb_sheet.addItem("English", "en")
+        cb_sheet.addItem("Polski", "pl")
+        _sl = self.cfg.get("sheet_lang", "both")
+        cb_sheet.setCurrentIndex({"both": 0, "en": 1, "pl": 2}.get(_sl, 0))
+        g.addWidget(cb_sheet, r, 1)
+        r += 1
+        for label, key in ((tr('Company'), "company"),
+                           (tr('Accent color'), "icon_color"),
                            ("UI scale (0=auto)", "ui_scale")):
             g.addWidget(QLabel(label), r, 0)
             e = QLineEdit(str(self.cfg.get(key, CFG_DEFAULT[key])))
             g.addWidget(e, r, 1)
             vars_[key] = e
             r += 1
-        ttl = QLabel("Available gages / Dostępne przyrządy:")
+        g = _page("Gages")
+        r = 0
+        ttl = QLabel(tr('Available gages'))
         ttl.setStyleSheet("font-weight:bold;")
         g.addWidget(ttl, r, 0, 1, 2)
         r += 1
         tvars = {}
-        for label, key in (("CMM if tol ≤ / CMM gdy tol ≤", "cmm_tol"),
-                           ("Micrometer if tol ≤ / Mikrometr gdy ≤",
+        for label, key in ((tr('CMM if tol ≤'), "cmm_tol"),
+                           (tr('Micrometer if tol ≤'),
                             "micrometer_tol")):
             g.addWidget(QLabel(label), r, 0)
             e = QLineEdit("%g" % float(self.cfg.get(key, CFG_DEFAULT[key])))
@@ -128,16 +190,23 @@ class SettingsMixin:
         gvars = {}
         for gname in GAGES:
             c = QCheckBox(gname)
-            c.setProperty("i18n_skip", True)   # data, not label
+            c.setProperty("i18n_skip", True)
             c.setChecked(bool(gcfg.get(gname, True)))
             g.addWidget(c, r, 0, 1, 2)
             gvars[gname] = c
             r += 1
-        c_pinauto = QCheckBox("Hole pin Ø = nominal / Pin = nominał")
-        c_pinauto.setChecked(bool(self.cfg.get("hole_pin_auto", True)))
+        g = _page("Bubbles")
+        r = 0
+        c_pinauto = QCheckBox(tr('Hole pin Ø = nominal'))
+        c_pinauto.setChecked(bool(self.cfg.get("hole_pin_auto", False)))
         g.addWidget(c_pinauto, r, 0, 1, 2)
         r += 1
-        c_snap = QCheckBox("Snap to drawing geometry / Przyciągaj")
+        c_posrows = QCheckBox("Hole X/Y position sub-rows / "
+                              "Podwiersze pozycji X/Y")
+        c_posrows.setChecked(bool(self.cfg.get("hole_position_rows", False)))
+        g.addWidget(c_posrows, r, 0, 1, 2)
+        r += 1
+        c_snap = QCheckBox(tr('Snap to drawing geometry'))
         c_snap.setChecked(bool(self.cfg.get("snap_geom", True)))
         g.addWidget(c_snap, r, 0, 1, 2)
         r += 1
@@ -153,8 +222,73 @@ class SettingsMixin:
             self.cfg.get("capture_radius", CFG_DEFAULT["capture_radius"])))
         g.addWidget(e_caprad, r, 1)
         r += 1
-        # Vision assist
-        vttl = QLabel("Vision assist (beta) / Wspomaganie wizyjne:")
+        g = _page("Tiers")
+        r = 0
+        c_shapes = QCheckBox(tr('Shape-code criticality tiers '
+                                '(colour-blind safe)'))
+        c_shapes.setChecked(bool(self.cfg.get("tier_shapes", True)))
+        c_shapes.setToolTip(tr("On: tiers differ by shape as well as colour. "
+                               "Off: all balloons are circles (colour only)."))
+        g.addWidget(c_shapes, r, 0, 1, 2)
+        r += 1
+        smap = dict(self.cfg.get("tier_shape_map")
+                    or CFG_DEFAULT["tier_shape_map"])
+        shape_cbs = {}
+        for tier in ("red", "blue", "green"):
+            lab = QLabel(tier)
+            lab.setProperty("i18n_skip", True)
+            g.addWidget(lab, r, 0)
+            cb = QComboBox()
+            cb.addItems(SHAPES)
+            cur = smap.get(tier, "circle")
+            cb.setCurrentText(cur if cur in SHAPES else "circle")
+            g.addWidget(cb, r, 1)
+            shape_cbs[tier] = cb
+            r += 1
+
+        def _sync_shapes():
+            for cb in shape_cbs.values():
+                cb.setEnabled(c_shapes.isChecked())
+        c_shapes.toggled.connect(lambda _b: _sync_shapes())
+        _sync_shapes()
+
+        ttl_tt = QLabel(tr('Auto-assign tier by callout type'))
+        ttl_tt.setStyleSheet("font-weight:bold;")
+        g.addWidget(ttl_tt, r, 0, 1, 2)
+        r += 1
+        c_typetier = QCheckBox(tr('Set each bubble tier from its callout type'))
+        c_typetier.setChecked(bool(self.cfg.get("type_tier_auto")))
+        c_typetier.setToolTip(tr("On: new bubbles take a tier from the table "
+                                 "below (e.g. GD&T -> blue, threads -> green). "
+                                 "Off: tier comes from the ribbon."))
+        g.addWidget(c_typetier, r, 0, 1, 2)
+        r += 1
+        ttmap = dict(self.cfg.get("type_tier_map")
+                     or CFG_DEFAULT["type_tier_map"])
+        _tier_opts = [t for t in TIERS if t]
+        tt_cbs = {}
+        for tp in TYPES:
+            lab = QLabel(tp)
+            lab.setProperty("i18n_skip", True)
+            g.addWidget(lab, r, 0)
+            cb = QComboBox()
+            cb.addItems(_tier_opts)
+            cb.setProperty("i18n_skip", True)
+            cur = ttmap.get(tp, "red")
+            cb.setCurrentText(cur if cur in _tier_opts else "red")
+            g.addWidget(cb, r, 1)
+            tt_cbs[tp] = cb
+            r += 1
+
+        def _sync_typetier():
+            for cb in tt_cbs.values():
+                cb.setEnabled(c_typetier.isChecked())
+        c_typetier.toggled.connect(lambda _b: _sync_typetier())
+        _sync_typetier()
+
+        g = _page("Vision")
+        r = 0
+        vttl = QLabel(tr('Vision assist (beta)'))
         vttl.setStyleSheet("font-weight:bold;")
         g.addWidget(vttl, r, 0, 1, 2)
         r += 1
@@ -173,12 +307,12 @@ class SettingsMixin:
         c_vocr_all.setChecked(bool(self.cfg.get("vision_ocr_always", False)))
         g.addWidget(c_vocr_all, r, 0, 1, 2)
         r += 1
-        g.addWidget(QLabel("        OCR min confidence / Min. pewność OCR"), r, 0)
+        g.addWidget(QLabel(tr('OCR min confidence')), r, 0)
         e_vocrconf = QLineEdit("%g" % float(
             self.cfg.get("vision_ocr_conf", CFG_DEFAULT["vision_ocr_conf"])))
         g.addWidget(e_vocrconf, r, 1)
         r += 1
-        c_vsym = QCheckBox("   • Detect GD&T symbols / Wykryj symbole GD&T")
+        c_vsym = QCheckBox(tr('• Detect GD&T symbols'))
         c_vsym.setChecked(bool(self.cfg.get("vision_symbols", True)))
         g.addWidget(c_vsym, r, 0, 1, 2)
         r += 1
@@ -193,19 +327,19 @@ class SettingsMixin:
         c_vregion.setChecked(bool(self.cfg.get("vision_region", True)))
         g.addWidget(c_vregion, r, 0, 1, 2)
         r += 1
-        g.addWidget(QLabel("        Block min confidence / Min. pewność bloku"),
+        g.addWidget(QLabel(tr('Block min confidence')),
                     r, 0)
         e_vrgnconf = QLineEdit("%g" % float(
             self.cfg.get("vision_region_conf", CFG_DEFAULT["vision_region_conf"])))
         g.addWidget(e_vrgnconf, r, 1)
         r += 1
-        g.addWidget(QLabel("   GPU / Execution provider"), r, 0)
+        g.addWidget(QLabel(tr('GPU')), r, 0)
         cb_vep = QComboBox()
         cb_vep.addItems(["auto", "cpu", "directml", "cuda"])
         cb_vep.setCurrentText(str(self.cfg.get("vision_ep", "auto")).lower())
         g.addWidget(cb_vep, r, 1)
         r += 1
-        g.addWidget(QLabel("   OCR engine / Silnik OCR"), r, 0)
+        g.addWidget(QLabel(tr('OCR engine')), r, 0)
         cb_voeng = QComboBox()
         cb_voeng.addItems(["rapidocr", "paddle"])
         cb_voeng.setCurrentText(
@@ -222,21 +356,21 @@ class SettingsMixin:
         c_vvlm_all.setChecked(bool(self.cfg.get("vision_vlm_always", False)))
         g.addWidget(c_vvlm_all, r, 0, 1, 2)
         r += 1
-        g.addWidget(QLabel("        VLM engine / Silnik VLM"), r, 0)
+        g.addWidget(QLabel(tr('VLM engine')), r, 0)
         cb_vvlmeng = QComboBox()
         cb_vvlmeng.addItems(["florence", "paddleocr_vl"])
         cb_vvlmeng.setCurrentText(
             str(self.cfg.get("vision_vlm_engine", "florence")).lower())
         g.addWidget(cb_vvlmeng, r, 1)
         r += 1
-        g.addWidget(QLabel("        VLM model / Model VLM"), r, 0)
+        g.addWidget(QLabel(tr('VLM model')), r, 0)
         cb_vvlmmodel = QComboBox()
-        cb_vvlmmodel.addItem("(default) / (domyślny)", "")
+        cb_vvlmmodel.addItem(tr('(default)'), "")
         for _pk in florence.list_packs():
             cb_vvlmmodel.addItem(_pk, _pk)
         _cur_vlmm = str(self.cfg.get("vision_vlm_model", "") or "")
         _vlmm_idx = cb_vvlmmodel.findData(_cur_vlmm)
-        if _vlmm_idx < 0:                       # manual path
+        if _vlmm_idx < 0:
             cb_vvlmmodel.addItem(_cur_vlmm, _cur_vlmm)
             _vlmm_idx = cb_vvlmmodel.count() - 1
         cb_vvlmmodel.setCurrentIndex(_vlmm_idx)
@@ -280,7 +414,6 @@ class SettingsMixin:
         r += 1
 
         def _sync_vision():
-            # gate on checkboxes, not backends
             on = c_vision.isChecked()
             c_vocr.setEnabled(on)
             c_vocr_all.setEnabled(on and c_vocr.isChecked())
@@ -300,6 +433,58 @@ class SettingsMixin:
         c_vregion.toggled.connect(lambda _b: _sync_vision())
         c_vvlm.toggled.connect(lambda _b: _sync_vision())
         _sync_vision()
+        ctl = QLabel(tr('Reader corrections'))
+        ctl.setStyleSheet("font-weight:bold;")
+        g.addWidget(ctl, r, 0, 1, 2)
+        r += 1
+        c_corr = QCheckBox(tr('Collect reader corrections (local, opt-in)'))
+        c_corr.setChecked(bool(self.cfg.get("collect_corrections", False)))
+        g.addWidget(c_corr, r, 0, 1, 2)
+        r += 1
+        g.addWidget(QLabel(tr('Corrections folder')), r, 0)
+        e_corrdir = QLineEdit(str(self.cfg.get("corrections_dir", "") or ""))
+        e_corrdir.setPlaceholderText("~/.bubbler/corrections")
+        b_corrdir = QPushButton(tr('Browse...'))
+
+        def _pick_corrdir():
+            start = e_corrdir.text() or os.path.expanduser("~")
+            d = QFileDialog.getExistingDirectory(
+                dlg, tr('Corrections folder'), start)
+            if d:
+                e_corrdir.setText(d)
+        b_corrdir.clicked.connect(_pick_corrdir)
+        cdw = QWidget()
+        cdl = QHBoxLayout(cdw)
+        cdl.setContentsMargins(0, 0, 0, 0)
+        cdl.addWidget(e_corrdir, 1)
+        cdl.addWidget(b_corrdir)
+        g.addWidget(cdw, r, 1)
+        r += 1
+        g.addWidget(QLabel(tr('Custom model (.onnx)')), r, 0)
+        e_vmodel = QLineEdit(str(self.cfg.get("vision_model", "") or ""))
+        e_vmodel.setPlaceholderText(tr('(default)'))
+        e_vmodel.setToolTip(tr('Point Bubbler at a locally-trained detector; '
+                               'blank uses the bundled model.'))
+        g.addWidget(e_vmodel, r, 1)
+        r += 1
+        corrhint = QLabel("   Off by default. Records (crop + fields, drawing "
+                          "name never stored) stay local and are never sent "
+                          "automatically. Export from the Data menu to share, "
+                          "or train locally (see DEV.md).")
+        corrhint.setProperty("i18n_skip", True)
+        corrhint.setStyleSheet("color:#777; font-size:8pt;")
+        corrhint.setWordWrap(True)
+        g.addWidget(corrhint, r, 0, 1, 2)
+        r += 1
+
+        def _sync_corr():
+            on = c_corr.isChecked()
+            e_corrdir.setEnabled(on)
+            b_corrdir.setEnabled(on)
+        c_corr.toggled.connect(lambda _b: _sync_corr())
+        _sync_corr()
+        g = _page("Tolerances")
+        r = 0
         c_dpon = QCheckBox("Tolerance by decimal places / wg miejsc "
                            "dziesiętnych:")
         c_dpon.setChecked(bool(self.cfg.get("dp_on")))
@@ -319,7 +504,7 @@ class SettingsMixin:
         g.addWidget(dpw, r, 0, 1, 2)
         r += 1
         cvars = {}
-        for label, key, vals in (("Default type / Typ", "default_type", TYPES),
+        for label, key, vals in ((tr('Default type'), "default_type", TYPES),
                                  ("Default tier", "default_tier", TIERS)):
             g.addWidget(QLabel(label), r, 0)
             cb = QComboBox()
@@ -334,7 +519,7 @@ class SettingsMixin:
                 self.cfg["ui_scale"] = float(
                     vars_["ui_scale"].text().replace(",", ".") or 0)
             except ValueError:
-                QMessageBox.critical(dlg, "Error / Błąd",
+                QMessageBox.critical(dlg, tr('Error'),
                                      "UI scale must be a number")
                 return
             for key, e in tvars.items():
@@ -344,7 +529,7 @@ class SettingsMixin:
                         raise ValueError
                 except ValueError:
                     QMessageBox.critical(
-                        dlg, "Error / Błąd",
+                        dlg, tr('Error'),
                         "Gage tolerance thresholds must be positive "
                         "numbers / Progi muszą być dodatnie")
                     return
@@ -352,14 +537,21 @@ class SettingsMixin:
             self.cfg["icon_color"] = vars_["icon_color"].text()
             self.cfg["company"] = vars_["company"].text()
             self.cfg["hole_pin_auto"] = bool(c_pinauto.isChecked())
+            self.cfg["hole_position_rows"] = bool(c_posrows.isChecked())
             self.cfg["snap_geom"] = bool(c_snap.isChecked())
+            self.cfg["tier_shapes"] = bool(c_shapes.isChecked())
+            self.cfg["tier_shape_map"] = {t: cb.currentText()
+                                          for t, cb in shape_cbs.items()}
+            self.cfg["type_tier_auto"] = bool(c_typetier.isChecked())
+            self.cfg["type_tier_map"] = {tp: cb.currentText()
+                                         for tp, cb in tt_cbs.items()}
             try:
                 obsw = float(e_obsw.text().replace(",", "."))
                 if obsw < 0:
                     raise ValueError
             except ValueError:
                 QMessageBox.critical(
-                    dlg, "Error / Błąd",
+                    dlg, tr('Error'),
                     "Line width threshold must be a number >= 0 / "
                     "Próg grubości musi być liczbą >= 0")
                 return
@@ -374,12 +566,11 @@ class SettingsMixin:
                     raise ValueError
             except ValueError:
                 QMessageBox.critical(
-                    dlg, "Error / Błąd",
+                    dlg, tr('Error'),
                     "Capture radius must be a number > 0 / "
                     "Promień musi być liczbą > 0")
                 return
             self.cfg["capture_radius"] = caprad
-            # confidences 0..1
             try:
                 vocrc = float(e_vocrconf.text().replace(",", "."))
                 vsymc = float(e_vsymconf.text().replace(",", "."))
@@ -389,11 +580,10 @@ class SettingsMixin:
                     raise ValueError
             except ValueError:
                 QMessageBox.critical(
-                    dlg, "Error / Błąd",
+                    dlg, tr('Error'),
                     "Vision confidences must be between 0 and 1 / "
                     "Pewność musi być w zakresie 0-1")
                 return
-            # vision change invalidates caches + sessions
             _vkeys = ("vision_assist", "vision_ocr", "vision_ocr_always",
                       "vision_ocr_conf", "vision_symbols", "vision_sym_conf",
                       "vision_region", "vision_region_conf", "vision_ep",
@@ -426,6 +616,13 @@ class SettingsMixin:
             self.cfg["vision_vlm_engine"] = _vnew[12]
             self.cfg["vision_vlm_model"] = _vnew[13]
             self.cfg["vision_sym_inject_vlm"] = _vnew[14]
+            self.cfg["collect_corrections"] = bool(c_corr.isChecked())
+            self.cfg["corrections_dir"] = e_corrdir.text().strip()
+            _newmodel = e_vmodel.text().strip()
+            if _newmodel != (self.cfg.get("vision_model") or ""):
+                self.__dict__.pop("_vword_cache", None)
+                vision.reset_sessions()
+            self.cfg["vision_model"] = _newmodel
             self.cfg["dp_on"] = bool(c_dpon.isChecked())
             dpt2 = {}
             for k, e in dpv.items():
@@ -433,7 +630,7 @@ class SettingsMixin:
                     dpt2[k] = float(e.text().replace(",", "."))
                 except ValueError:
                     QMessageBox.critical(
-                        dlg, "Error / Błąd",
+                        dlg, tr('Error'),
                         "Decimal-place tolerances must be numbers / "
                         "muszą być liczbami")
                     return
@@ -445,25 +642,41 @@ class SettingsMixin:
             new_lang = cb_lang.currentData()
             self.cfg["language"] = new_lang
             set_lang(new_lang)
+            self.cfg["mode"] = cb_mode.currentData()
+            self.cfg["units"] = cb_units.currentData()
+            self.cfg["sheet_lang"] = cb_sheet.currentData()
+            self.writer.sheet_lang = self.cfg["sheet_lang"]
             save_cfg(self.cfg)
+            try:
+                from . import vision
+                vision.clear_cache()
+            except Exception:
+                pass
             self._apply_ui_scale(rebuild=True)
-            retranslate(self)   # ribbon skips measure bar + panel
+            self._apply_mode()
+            retranslate(self)
             dlg.accept()
             self.render()
-            self.set_status("settings saved / ustawienia zapisane")
+            self.set_status(tr('settings saved'))
 
         bw = QWidget()
         bl = QHBoxLayout(bw)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.addStretch(1)
         b_ok = QPushButton("OK")
         b_ok.setDefault(True)
         b_ok.clicked.connect(ok)
-        b_cancel = QPushButton("Cancel / Anuluj")
+        b_cancel = QPushButton(tr('Cancel'))
         b_cancel.clicked.connect(dlg.reject)
         bl.addWidget(b_ok)
         bl.addWidget(b_cancel)
-        g.addWidget(bw, r, 0, 1, 2)
-        dlg.setWindowTitle(tr("Settings / Ustawienia"))
+        outer.addWidget(bw)
+        dlg.setWindowTitle(tr('Settings'))
         retranslate(dlg)
+        avail = self.screen().availableGeometry() if self.screen() else None
+        cap_h = int(avail.height() * 0.9) if avail else 900
+        cap_w = int(avail.width() * 0.9) if avail else 640
+        dlg.setMaximumHeight(cap_h)
+        dlg.setMinimumWidth(min(600, cap_w))
+        dlg.resize(min(640, cap_w), min(820, cap_h))
         dlg.exec()
-
-    # Scan review

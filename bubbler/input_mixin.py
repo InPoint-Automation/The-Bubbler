@@ -6,6 +6,7 @@
 from PySide6.QtCore import Qt, QPointF
 
 from .common import base_of
+from .i18n import tr
 
 
 class InputMixin:
@@ -28,7 +29,6 @@ class InputMixin:
             vp_pos = e.position()
             new_center_view = QPointF(self.view.viewport().width() / 2.0,
                                       self.view.viewport().height() / 2.0)
-            # keep clicked point under cursor
             delta = self.view.mapFromScene(target) - vp_pos.toPoint()
             h = self.view.horizontalScrollBar()
             v = self.view.verticalScrollBar()
@@ -36,7 +36,7 @@ class InputMixin:
             v.setValue(v.value() + delta.y())
 
     def on_press(self, sp, vpos, predict=True):
-        if self._scan_region_mode:
+        if self._scan_region_mode or getattr(self, "_correct_mode", None):
             self._scan_drag = (sp.x(), sp.y(), sp.x(), sp.y())
             return
         self._swallow = False
@@ -55,11 +55,10 @@ class InputMixin:
         if hit is not None:
             self._drag = ("bubble", hit)
             return
-        # active tool handles empty space
         self._active_tool.press_empty(sp, predict)
 
     def on_motion(self, sp, vpos):
-        if self._scan_region_mode:
+        if self._scan_region_mode or getattr(self, "_correct_mode", None):
             if self._scan_drag is not None:
                 x0, y0, _, _ = self._scan_drag
                 self._scan_drag = (x0, y0, sp.x(), sp.y())
@@ -114,8 +113,10 @@ class InputMixin:
         if self._scan_region_mode:
             self._finish_scan_drag(sp)
             return
+        if getattr(self, "_correct_mode", None):
+            self._finish_correct_drag(sp)
+            return
         if self._swallow:
-            # gesture already handled
             self._swallow = False
             self._drag = None
             self._dragged = False
@@ -180,5 +181,5 @@ class InputMixin:
                     self.sel.add(u)
         self.redraw_overlay()
         self._qbar_refresh()
-        self.set_status("%d selected / zaznaczono" % len(self.sel))
+        self.set_status(tr('%d selected') % len(self.sel))
 

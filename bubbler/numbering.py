@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Positional bubble numbering. Derived from order, not stored.
+# Positional bubble numbering.
 
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
 

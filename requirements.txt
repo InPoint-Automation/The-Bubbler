@@ -16,5 +16,6 @@ ultralytics                      # train
 onnx
 onnxsim
 torch
+augraphy
 
 pytest
