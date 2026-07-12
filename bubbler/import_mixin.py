@@ -3,13 +3,56 @@
 #
 # CMM/CSV measurement import: values by balloon number into a chosen op.
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QInputDialog
+from PySide6.QtWidgets import (QFileDialog, QMessageBox, QInputDialog,
+                               QDialog, QVBoxLayout, QLabel, QTableWidget,
+                               QTableWidgetItem, QDialogButtonBox,
+                               QAbstractItemView)
 
 from .config import save_cfg
 from .i18n import tr
 
 
 class ImportMixin:
+    def _cmm_preview(self, records, m, errors):
+        """Show matched/unmatched/duplicate rows before applying. True=proceed."""
+        status = {}
+        for idx, rec in m["matched"]:
+            tgt = self.ledger[idx].get("bubble") if idx < len(self.ledger) else "?"
+            status[id(rec)] = tr('-> #%s') % tgt
+        for rec in m["duplicates"]:
+            status[id(rec)] = tr('duplicate (superseded)')
+        for rec in m["unmatched"]:
+            status[id(rec)] = tr('no bubble on drawing')
+        for rec in m["no_base"]:
+            status[id(rec)] = tr('unreadable bubble')
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr('Import preview'))
+        dlg.resize(560, 420)
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel(
+            tr('%d matched, %d unmatched, %d duplicate, %d bad')
+            % (len(m["matched"]), len(m["unmatched"]),
+               len(m["duplicates"]), len(m["no_base"]) + len(errors))))
+        tbl = QTableWidget(len(records), 4, dlg)
+        tbl.setHorizontalHeaderLabels(
+            [tr('Bubble'), tr('Value'), tr('gage'), tr('Status')])
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tbl.setSelectionMode(QAbstractItemView.NoSelection)
+        for r, rec in enumerate(records):
+            cells = [rec.get("bubble", ""), rec.get("value", ""),
+                     rec.get("gage") or "", status.get(id(rec), "")]
+            for c, txt in enumerate(cells):
+                tbl.setItem(r, c, QTableWidgetItem(str(txt)))
+        tbl.resizeColumnsToContents()
+        v.addWidget(tbl)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText(tr('Import'))
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        v.addWidget(bb)
+        return dlg.exec() == QDialog.Accepted
+
     def cmm_import(self):
         from .cmm_import import parse_cmm_csv, match_to_ledger
 
@@ -18,13 +61,28 @@ class ImportMixin:
             self, tr('Import CMM/CSV'), seed, "CSV (*.csv)")
         if not path:
             return
-        try:
-            text = open(path, encoding="utf-8-sig").read()
-        except OSError as e:
-            self.set_status(tr('import failed: %s') % e)
+        text = None
+        for enc in ("utf-8-sig", "cp1250", "latin-1"):
+            try:
+                with open(path, encoding=enc) as fh:
+                    text = fh.read()
+                break
+            except UnicodeDecodeError:
+                continue
+            except OSError as e:
+                self.set_status(tr('import failed: %s') % e)
+                return
+        if text is None:
+            self.set_status(tr('import failed: could not decode file'))
             return
         records, errors = parse_cmm_csv(text)
+        if not records:
+            QMessageBox.information(self, tr('Import CMM/CSV'),
+                                    tr('No rows found in the file.'))
+            return
         m = match_to_ledger(records, self.ledger)
+        if not self._cmm_preview(records, m, errors):
+            return
         matched = m["matched"]
         if not matched:
             QMessageBox.information(self, tr('Import CMM/CSV'),

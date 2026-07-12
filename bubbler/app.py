@@ -6,7 +6,7 @@
 import os
 
 import fitz
-from PySide6.QtCore import Qt, QTimer, QPointF, QRectF
+from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, QEvent
 from PySide6.QtGui import (QImage, QPixmap, QPainter, QPen, QBrush, QColor,
                            QFont, QKeySequence, QShortcut, QPolygonF)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QCheckBox)
 
 from .common import (APP_NAME, RADIUS, FONTSZ, RED, LEADER_EXITS,
-                     TYPES, GROUPS, TIERS, GROUP_OF,
+                     TYPES, TIERS,
                      base_of, qc_path,
                      tier_rgb, tier_shape, bubble_shape_points, tier_for_type,
                      measure_state)
@@ -44,6 +44,7 @@ from .bubble_mixin import BubbleMixin
 from .titleblock_mixin import TitleblockMixin
 from .nav_mixin import NavMixin
 from .corrections_mixin import CorrectionsMixin
+from .calc_mixin import CalcMixin
 from .store import BubbleStore
 from .viewport import Viewport
 from .tools import make_tools
@@ -53,7 +54,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                  SettingsMixin, RibbonMixin, ReportMixin, ImportMixin,
                  ExportMixin, ScanMixin, CaptureMixin, InputMixin,
                  BubbleMixin, TitleblockMixin, NavMixin, CorrectionsMixin,
-                 HotbarMixin, QMainWindow):
+                 CalcMixin, HotbarMixin, QMainWindow):
     UNDO_DEPTH = 50
     _DIRS = (("n", 0, -1), ("e", 1, 0), ("s", 0, 1), ("w", -1, 0))
     _OFF_LABEL = {"auto": "auto", "n": "↑ N", "e": "→ E",
@@ -161,8 +162,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
 
         self.last = {
             "type": self.cfg.get("default_type", TYPES[0]),
-            "group": GROUP_OF.get(self.cfg.get("default_type", TYPES[0]),
-                                  GROUPS[0]),
             "tier": self.cfg.get("default_tier", ""),
             "iso_on": bool(self.cfg.get("rib_iso_on")),
             "tsym": "", "tmax": "", "tmin": "",
@@ -177,6 +176,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._build_nav()
         self.store.subscribe(self.refresh_panel)
         self._build_measure_bar()
+        self._build_calc()
         self.statusBar()
         self._status_state = QLabel("")
         self.statusBar().addPermanentWidget(self._status_state, 1)
@@ -195,17 +195,42 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._walk = []
         self._walk_idx = 0
         self._install_shortcuts()
+        QApplication.instance().installEventFilter(self)
         retranslate(self)
         self._prewarm_vision()
 
         self.resize(1500, 950)
-        self.showMaximized()
+        if not self._restore_window():
+            self.showMaximized()
         self.render()
         self.refresh_panel()
         QTimer.singleShot(150, self.fit)
         if self.cfg.get("hotbar_on", True):
             QTimer.singleShot(350, lambda: self._qbar_show(persist=False))
         QTimer.singleShot(500, self._titleblock_autofill)
+
+    def _restore_window(self):
+        """Restore saved geometry. True if applied."""
+        try:
+            from PySide6.QtCore import QByteArray
+            g = self.cfg.get("win_geometry")
+            if g:
+                self.restoreGeometry(QByteArray.fromHex(
+                    g.encode("ascii")))
+                return True
+        except Exception:
+            pass
+        return False
+
+    def closeEvent(self, e):
+        try:
+            g = bytes(self.saveGeometry().toHex()).decode("ascii")
+            if g != self.cfg.get("win_geometry"):
+                self.cfg["win_geometry"] = g
+                save_cfg(self.cfg)
+        except Exception:
+            pass
+        super().closeEvent(e)
 
     def _install_shortcuts(self):
         def sc(seq, fn):
@@ -340,6 +365,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.btn_tool_sel.setChecked(self.tool == "select")
         self.btn_panel.setChecked(self.panel_visible)
         self.btn_measure.setChecked(self.measure_mode)
+        self.btn_calc.setChecked(self._calc_dock.isVisible())
 
     def _style_set(self, key, val):
         lo, hi = (3, 40) if key == "radius" else (4, 30)
@@ -384,18 +410,14 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             mt = 0.03
         return suggest_gage(d, self.cfg.get("gages"), ct, mt)
 
-    def _rib_set(self, key, val, group=False):
+    def _rib_set(self, key, val):
         self.last[key] = val
-        if group:
-            self.last["group"] = GROUP_OF.get(val, self.last.get("group", ""))
-            set_combo_key(self.cb_group, self.last["group"])
         if key in ("type", "tier"):
             self.cfg["default_%s" % key] = val
             save_cfg(self.cfg)
 
     def _rib_sync(self):
         set_combo_key(self.cb_type, self.last.get("type", TYPES[0]))
-        set_combo_key(self.cb_group, self.last.get("group", GROUPS[0]))
         self.e_tsym.setText(self.last.get("tsym", ""))
         self.e_tmax.setText(self.last.get("tmax", ""))
         self.e_tmin.setText(self.last.get("tmin", ""))
@@ -462,6 +484,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             nbx, nby = self.auto_offset(d["x"], d["y"],
                                         page_i=d.get("page"))
             self._set_uid_pos(d["uid"], bx=nbx, by=nby)
+        elif not lead:
+            self._set_uid_pos(d["uid"], bx=d["x"], by=d["y"])
         want = getattr(dlg, "new_number", None)
         if want is not None and want != base_of(d["bubble"]):
             self.store.set_number(d["uid"], want)
@@ -890,6 +914,45 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         return isinstance(w, (QLineEdit, QComboBox, QDoubleSpinBox)) or \
             (w is not None and w.metaObject().className() == "QSpinBox")
 
+    def _text_input_focused(self):
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QDoubleSpinBox)):
+            return True
+        if isinstance(w, QComboBox):
+            return w.isEditable()
+        return bool(w) and w.metaObject().className() in (
+            "QSpinBox", "QPlainTextEdit", "QTextEdit")
+
+    def eventFilter(self, obj, e):
+        # letter shortcuts fire even when focus sits on a ribbon widget
+        if e.type() == QEvent.KeyPress and self.isActiveWindow() \
+                and not QApplication.activeModalWidget() \
+                and not self._text_input_focused():
+            fw = QApplication.focusWidget()
+            vp = getattr(self.view, "viewport", lambda: None)()
+            if fw is not self.view and fw is not vp \
+                    and self._global_letter(e.text()):
+                return True
+        return super().eventFilter(obj, e)
+
+    def _global_letter(self, ch):
+        if ch == "m":
+            self.toggle_measure()
+            return True
+        if self.measure_mode:            # other toggles blocked mid-measure
+            return False
+        if ch == "b":
+            self.toggle_panel()
+        elif ch == "v":
+            self.set_tool("select")
+        elif ch == "a":
+            self.set_tool("add")
+        elif ch == "q":
+            self._kbd_qbar()
+        else:
+            return False
+        return True
+
     def _kbd_tool(self, name):
         if self._entry_focused() or self.measure_mode:
             return
@@ -1107,6 +1170,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         b_nogo.setMaximumWidth(60)
         b_nogo.setToolTip(tr('Record NOGO + next'))
         b_nogo.clicked.connect(lambda: self._measure_quick("NOGO"))
+        b_clear = QPushButton("↺")
+        b_clear.setMaximumWidth(30)
+        b_clear.setToolTip(tr('Clear this reading (re-measure)'))
+        b_clear.clicked.connect(self._measure_clear)
+        self.mprev = QLabel("")
+        self.mprev.setStyleSheet("color:#8a6d3b; font-size:8pt;")
         gage_lbl = QLabel(tr('gage'))
         gage_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
         self.mgage_cb = QComboBox()
@@ -1124,6 +1193,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         lay.addWidget(self.ment)
         lay.addWidget(b_go)
         lay.addWidget(b_nogo)
+        lay.addWidget(b_clear)
+        lay.addWidget(self.mprev)
         lay.addWidget(gage_lbl)
         lay.addWidget(self.mgage_cb)
         lay.addWidget(self.mskip_cb)

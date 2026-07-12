@@ -138,7 +138,7 @@ class MeasureEdit(QLineEdit):
             if mods & Qt.ShiftModifier:
                 self.app._walk_step(-1)
             else:
-                self.app._walk_commit(+1)
+                self.app._measure_enter()
             return
         if k == Qt.Key_Tab:
             self.app._walk_step(+1)

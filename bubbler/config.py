@@ -32,7 +32,6 @@ CFG_DEFAULT = {
     "cmm_import_op": "",           # "" = ask each time
     "oot_report_sheet": False,
     "hole_pin_auto": False,
-    "hole_position_rows": False,
     "units": "iso_mm",
     "mode": "advanced",
     "qc_subdir": "qc",       # "" = beside PDF
@@ -51,6 +50,8 @@ CFG_DEFAULT = {
                       "position": "red", "GD&T": "red", "finish": "red"},
     "offset_dir": "auto",
     "hotbar_on": True,
+    "win_geometry": "",      # base64 saved window size/position
+
     "obstacle_min_w": 0.5,   # pt
     "language": "en",
     "sheet_lang": "both",
@@ -89,6 +90,7 @@ CFG_DEFAULT = {
     "vision_vlm_engine": "florence",
     "vision_vlm_model": "",       # blank = bundled
     "vision_sym_inject_vlm": True,
+    "vision_sym_inject_text": True,   # inject glyphs into text-layer
     "vision_paddlevl_model": "",  # blank = paddle cache
 }
 

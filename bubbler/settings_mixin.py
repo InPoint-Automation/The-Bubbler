@@ -201,11 +201,6 @@ class SettingsMixin:
         c_pinauto.setChecked(bool(self.cfg.get("hole_pin_auto", False)))
         g.addWidget(c_pinauto, r, 0, 1, 2)
         r += 1
-        c_posrows = QCheckBox("Hole X/Y position sub-rows / "
-                              "Podwiersze pozycji X/Y")
-        c_posrows.setChecked(bool(self.cfg.get("hole_position_rows", False)))
-        g.addWidget(c_posrows, r, 0, 1, 2)
-        r += 1
         c_snap = QCheckBox(tr('Snap to drawing geometry'))
         c_snap.setChecked(bool(self.cfg.get("snap_geom", True)))
         g.addWidget(c_snap, r, 0, 1, 2)
@@ -385,6 +380,16 @@ class SettingsMixin:
             "and let the VLM read the callout itself.")
         g.addWidget(c_vsyminj, r, 0, 1, 2)
         r += 1
+        c_vsyminj_t = QCheckBox("        inject detected symbols into text-layer "
+                                "reads / wstrzykuj symbole do tekstu")
+        c_vsyminj_t.setChecked(bool(self.cfg.get("vision_sym_inject_text",
+                                                 True)))
+        c_vsyminj_t.setToolTip(
+            "On: splice GD&T glyphs the detector found into blocks that already "
+            "have a PDF text layer (a vector leader symbol is often missing "
+            "from the text). Duplicates the text already shows are skipped.")
+        g.addWidget(c_vsyminj_t, r, 0, 1, 2)
+        r += 1
         if not (vavail["ocr"] and vavail["symbols"]):
             vhint = QLabel("   OCR / symbol passes need the vision build; "
                            "geometry pass works now.")
@@ -406,11 +411,28 @@ class SettingsMixin:
             vlmhint.setStyleSheet("color:#777; font-size:8pt;")
             g.addWidget(vlmhint, r, 0, 1, 2)
             r += 1
-        ephint = QLabel("   Execution provider available: %s"
-                        % ("GPU + CPU" if vavail.get("gpu") else "CPU only"))
+        provs = vavail.get("providers") or []
+        prov_txt = ", ".join(p.replace("ExecutionProvider", "") for p in provs) \
+            or "none"
+        ephint = QLabel("   Execution provider available: %s   (%s)"
+                        % ("GPU + CPU" if vavail.get("gpu") else "CPU only",
+                           prov_txt))
         ephint.setProperty("i18n_skip", True)
         ephint.setStyleSheet("color:#777; font-size:8pt;")
         g.addWidget(ephint, r, 0, 1, 2)
+        r += 1
+        # why pass off/degraded
+        for _rmsg in (vavail.get("reasons") or {}).values():
+            rl = QLabel("   ! " + _rmsg)
+            rl.setProperty("i18n_skip", True)
+            rl.setWordWrap(True)
+            rl.setStyleSheet("color:#b7791f; font-size:8pt;")
+            g.addWidget(rl, r, 0, 1, 2)
+            r += 1
+        loghint = QLabel("   Diagnostics log: ~/.bubbler.log")
+        loghint.setProperty("i18n_skip", True)
+        loghint.setStyleSheet("color:#999; font-size:8pt;")
+        g.addWidget(loghint, r, 0, 1, 2)
         r += 1
 
         def _sync_vision():
@@ -537,7 +559,6 @@ class SettingsMixin:
             self.cfg["icon_color"] = vars_["icon_color"].text()
             self.cfg["company"] = vars_["company"].text()
             self.cfg["hole_pin_auto"] = bool(c_pinauto.isChecked())
-            self.cfg["hole_position_rows"] = bool(c_posrows.isChecked())
             self.cfg["snap_geom"] = bool(c_snap.isChecked())
             self.cfg["tier_shapes"] = bool(c_shapes.isChecked())
             self.cfg["tier_shape_map"] = {t: cb.currentText()
@@ -589,7 +610,7 @@ class SettingsMixin:
                       "vision_region", "vision_region_conf", "vision_ep",
                       "vision_ocr_engine", "vision_vlm", "vision_vlm_always",
                       "vision_vlm_engine", "vision_vlm_model",
-                      "vision_sym_inject_vlm")
+                      "vision_sym_inject_vlm", "vision_sym_inject_text")
             _vnew = (bool(c_vision.isChecked()), bool(c_vocr.isChecked()),
                      bool(c_vocr_all.isChecked()), vocrc,
                      bool(c_vsym.isChecked()), vsymc,
@@ -597,7 +618,8 @@ class SettingsMixin:
                      cb_vep.currentText(), cb_voeng.currentText(),
                      bool(c_vvlm.isChecked()), bool(c_vvlm_all.isChecked()),
                      cb_vvlmeng.currentText(), cb_vvlmmodel.currentData(),
-                     bool(c_vsyminj.isChecked()))
+                     bool(c_vsyminj.isChecked()),
+                     bool(c_vsyminj_t.isChecked()))
             if _vnew != tuple(self.cfg.get(k) for k in _vkeys):
                 self.__dict__.pop("_vword_cache", None)
                 vision.reset_sessions()
@@ -616,6 +638,7 @@ class SettingsMixin:
             self.cfg["vision_vlm_engine"] = _vnew[12]
             self.cfg["vision_vlm_model"] = _vnew[13]
             self.cfg["vision_sym_inject_vlm"] = _vnew[14]
+            self.cfg["vision_sym_inject_text"] = _vnew[15]
             self.cfg["collect_corrections"] = bool(c_corr.isChecked())
             self.cfg["corrections_dir"] = e_corrdir.text().strip()
             _newmodel = e_vmodel.text().strip()

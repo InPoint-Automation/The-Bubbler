@@ -41,7 +41,7 @@ ICON_COLORS = {
     "zoom_in": "#2b6cb0", "zoom_out": "#2b6cb0", "rotate": "#6b46c1",
     "prev": "#4a5568", "next": "#4a5568", "header": "#b7791f",
     "settings": "#4a5568", "help": "#2b6cb0", "measure": "#c53030",
-    "panel": "#2c7a7b", "scan": "#6b46c1",
+    "panel": "#2c7a7b", "scan": "#6b46c1", "calc": "#2b6cb0",
 }
 
 _DEFAULT_COLOR = "#1F3864"

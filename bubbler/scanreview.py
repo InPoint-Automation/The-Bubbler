@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QInputDialog, QMessageBox)
 
-from .common import TYPES, GROUP_OF, dp_tol, tier_for_type
+from .common import TYPES, dp_tol, tier_for_type
 from .config import units_of
 from .scanlib import (scan_to_row, expand_hole_row, denorm_candidates,
                       GAGES, repeat_count)
@@ -180,7 +180,6 @@ class ScanReview(QDialog):
         rw = self._to_row(h, pg)
         if ov.get("type"):
             rw["type"] = ov["type"]
-            rw["group"] = GROUP_OF.get(ov["type"], rw["group"])
         rw["gage"] = ov.get("gage") or self.app.suggest(rw)
         self.rows[i][2] = rw
         self._fill_row(i)
@@ -280,7 +279,6 @@ class ScanReview(QDialog):
             if ok and val:
                 ov["type"] = val
                 rw["type"] = val
-                rw["group"] = GROUP_OF.get(val, rw["group"])
                 self._fill_row(i)
         elif col == "gage":
             cur = rw["gage"]
@@ -354,6 +352,7 @@ class ScanReview(QDialog):
 
         group_uid = {}
         group_anchor = {}
+        group_qty = {}
         for it in items:
             cg = it["h"].get("cg")
             it["_key"] = (it["pg"], cg) if cg is not None \
@@ -361,6 +360,9 @@ class ScanReview(QDialog):
             if it["_key"] not in group_uid:
                 group_uid[it["_key"]] = app.store.new_uid()
                 group_anchor[it["_key"]] = it
+            # nX anywhere in block
+            q = repeat_count(it["rw"].get("feature"))
+            group_qty[it["_key"]] = max(group_qty.get(it["_key"], 1), q)
 
         for it in items:
             h, rw, pg, expand = it["h"], it["rw"], it["pg"], it["expand"]
@@ -388,7 +390,10 @@ class ScanReview(QDialog):
                     base["tol_sym"] = t2768
                     base["gage"] = app.suggest(base)
             uid = group_uid[it["_key"]]
+            gq = group_qty.get(it["_key"], 1)
             for d in expand_hole_row(base, app.cfg, repeat=expand):
+                if expand and gq > 1:
+                    d["qty"] = gq
                 if not d.get("gage"):
                     d["gage"] = app.suggest(d)
                 d.setdefault("leader", app.use_leaders())

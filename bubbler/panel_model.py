@@ -12,7 +12,7 @@ from .i18n import tr
 
 PANEL_COLS = [("bubble", "#", 45), ("feature", "feature/cecha", 130),
               ("nominal", "nominal", 70), ("tol", "tol", 90),
-              ("type", "type/typ", 90), ("group", "group/grupa", 110),
+              ("type", "type/typ", 90),
               ("tier", "tier", 50), ("pin", "pin", 50),
               ("gage", "gage/przyrząd", 90),
               ("measured", "measured/pomiar", 90)]
@@ -50,7 +50,7 @@ def cell_text(d, key):
     if key == "bubble":
         return str(d.get("bubble", ""))
     val = d.get(key, "") or ""
-    if key in ("type", "group"):
+    if key == "type":
         return tr(val)
     return val
 

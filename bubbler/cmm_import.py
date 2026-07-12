@@ -19,6 +19,17 @@ def _pick(fieldmap, aliases):
     return None
 
 
+def _sniff_delim(lines):
+    """Delimiter comma/semicolon/tab; comma."""
+    sample = "\n".join(lines[:5])
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=";,\t").delimiter
+    except (csv.Error, IndexError):
+        head = lines[0] if lines else ""
+        best = max(";,\t", key=head.count)      # most in header
+        return best if head.count(best) else ","
+
+
 def parse_cmm_csv(text):
     """Parse CMM CSV -> (records, errors); record {bubble,value,gage|None,line}, error {line,reason}."""
     records, errors = [], []
@@ -26,7 +37,7 @@ def parse_cmm_csv(text):
         lines = text.splitlines()
     else:
         lines = list(text)
-    reader = csv.DictReader(lines)
+    reader = csv.DictReader(lines, delimiter=_sniff_delim(lines))
     if not reader.fieldnames:
         return records, errors
     fieldmap = {}

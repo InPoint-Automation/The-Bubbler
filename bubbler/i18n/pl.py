@@ -268,6 +268,10 @@ CATALOG = {
     'Enter=save+next  G/+=GO  N/-=NOGO  Shift+Enter=back  Tab=skip  Esc=exit':
         'Enter=zapisz+dalej  G/+=GO  N/-=NOGO  Shift+Enter=wstecz  '
         'Tab=pomiń  Esc=wyjście',
+    'Clear this reading (re-measure)': 'Wyczyść ten pomiar (zmierz ponownie)',
+    'prev: %s': 'poprz.: %s',
+    'walk complete: %d/%d measured, %d out of tol':
+        'zakończono: %d/%d zmierzonych, %d poza tolerancją',
     # status bar
     ' Page %d/%d   next here #%d   zoom %d%%   bubbles here: %d   rows: %d '
     '(crit %d, CMM %d)   unsaved: %d':
@@ -288,6 +292,10 @@ CATALOG = {
     # bubble dialog labels
     'Bubble': 'Bąbel',
     'Nominal': 'Nominał',
+    'Qty ×': 'Ilość ×',
+    'Quantity of instances; the measure walk takes that many readings and '
+    'keeps the worst.':
+        'Liczba wystąpień; pomiar pobiera tyle odczytów i zachowuje najgorszy.',
     'pattern ×': 'wzór ×',
     'shared:': 'wspólne:',
     'X & Y differ': 'X i Y różne',
@@ -361,6 +369,8 @@ CATALOG = {
     'exported: %s': 'wyeksportowano: %s',
     'CSV export failed: %s': 'eksport CSV nieudany: %s',
     'import failed: %s': 'import nieudany: %s',
+    'import failed: could not decode file':
+        'import nieudany: nie udało się odczytać pliku',
     'No balloon numbers matched.': 'Brak dopasowanych numerów bąbli.',
     'Import into op:': 'Importuj do op:',
     'Imported %d into %s': 'Zaimportowano %d do %s',
@@ -368,6 +378,17 @@ CATALOG = {
     '%d duplicate rows': '%d zduplikowanych wierszy',
     '%d bad rows': '%d błędnych wierszy',
     'imported %d measurements': 'zaimportowano %d pomiarów',
+    'No rows found in the file.': 'Nie znaleziono wierszy w pliku.',
+    'Import preview': 'Podgląd importu',
+    'Import': 'Importuj',
+    'Status': 'Status',
+    'Value': 'Wartość',
+    '%d matched, %d unmatched, %d duplicate, %d bad':
+        '%d dopasowanych, %d niedopasowanych, %d duplikatów, %d błędnych',
+    '-> #%s': '-> #%s',
+    'duplicate (superseded)': 'duplikat (zastąpiony)',
+    'no bubble on drawing': 'brak bąbla na rysunku',
+    'unreadable bubble': 'nieczytelny bąbel',
     # page navigator
     'Pages': 'Strony',
     'Page navigator': 'Nawigator stron',
@@ -412,4 +433,22 @@ CATALOG = {
     'no title block found': 'nie znaleziono tabelki',
     'Scan title block': 'Skanuj tabelkę',
     'title block scanned': 'tabelka zeskanowana',
+    # sheet capacity
+    'Sheet full': 'Arkusz pełny',
+    '%d new bubbles but only %d free rows on the inspection sheet. Nothing '
+    'was saved. Remove bubbles or start a new sheet.':
+        'Nowych bąbli: %d, a wolnych wierszy w arkuszu tylko %d. Nic nie '
+        'zapisano. Usuń bąble lub rozpocznij nowy arkusz.',
+    # calculator
+    'Calculator': 'Kalkulator',
+    'Calc': 'Kalk.',
+    'To measure': 'Do pomiaru',
+    'Send result to the measure field': 'Wyślij wynik do pola pomiaru',
+    'Copy': 'Kopiuj',
+    'invalid': 'błędne',
+    'result copied': 'wynik skopiowany',
+    'result -> measure field': 'wynik -> pole pomiaru',
+    'not measuring; result copied': 'brak pomiaru; wynik skopiowany',
+    '= %s   (Enter again to save)': '= %s   (Enter ponownie, aby zapisać)',
+    'reading %d/%d  (Enter next)': 'odczyt %d/%d  (Enter = następny)',
 }

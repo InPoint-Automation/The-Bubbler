@@ -8,7 +8,7 @@ import re
 
 APP_NAME = "Bubbler"
 ORG = "InPoint Automation Sp. z o.o."
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 RADIUS = 9.0
 FONTSZ = 10.0
@@ -76,19 +76,7 @@ LAST_ROW = 310
 
 TYPES = ["dim", "hole", "thread", "thru", "slot", "depth", "position",
          "GD&T", "finish"]
-GROUPS = ["LWH", "positions", "holes Ø", "threads", "GD&T", "finish", "other"]
 TIERS = ["", "red", "blue", "green"]
-GROUP_OF = {
-    "dim": "LWH",
-    "hole": "holes Ø",
-    "thread": "threads",
-    "thru": "holes Ø",
-    "slot": "positions",
-    "depth": "LWH",
-    "position": "positions",
-    "GD&T": "GD&T",
-    "finish": "finish",
-}
 
 KIND_ATOMIC = "atomic"
 KIND_STACKED = "stacked"
@@ -191,8 +179,9 @@ def dp_tol(val, cfg):
 
 
 def base_of(bubble):
-    b = str(bubble)
-    return int(b.rstrip("abcdefghijklmnopqrstuvwxyz") or 0)
+    # leading digits only
+    m = re.match(r"\d+", str(bubble))
+    return int(m.group(0)) if m else 0
 
 
 def qc_path(pdf_path, suffix, subdir="qc", legacy=True):
@@ -216,10 +205,11 @@ def tol_text(d):
     tmax, tmin = d.get("tol_max"), d.get("tol_min")
     if tmax is None and tmin is None:
         return ""
-    if tmax is not None and tmin is not None:
-        hi, lo = max(tmax, tmin), min(tmax, tmin)
-        return "%+g/%+g" % (hi, lo)
-    return "%+g/?" % (tmax if tmax is not None else tmin)
+    val = tmax if tmax is not None else 0.0
+    val2 = tmin if tmin is not None else 0.0
+    hi, lo = max(val, val2), min(val, val2)
+    return "%s/%s" % ("0" if hi == 0 else "%+g" % hi,
+                      "0" if lo == 0 else "%+g" % lo)
 
 
 def limits_of(d):
@@ -231,9 +221,11 @@ def limits_of(d):
         s = abs(d["tol_sym"])
         return (nom - s, nom + s)
     tmax, tmin = d.get("tol_max"), d.get("tol_min")
-    if tmax is None or tmin is None:
+    if tmax is None and tmin is None:
         return None
-    return (nom + min(tmax, tmin), nom + max(tmax, tmin))
+    hi = tmax if tmax is not None else 0.0
+    lo = tmin if tmin is not None else 0.0
+    return (nom + min(lo, hi), nom + max(lo, hi))
 
 
 def latest_op(ops):
@@ -244,12 +236,48 @@ def latest_op(ops):
     return items[-1]
 
 
+def band_center(d):
+    """Midpoint of the acceptance band (nominal when there is no band)."""
+    lim = limits_of(d)
+    if lim is not None:
+        return (lim[0] + lim[1]) / 2.0
+    return d.get("nominal")
+
+
+def _as_float(s):
+    try:
+        return float(str(s).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def worst_reading(values, d):
+    """Worst of several qty readings"""
+    vals = [str(v).strip() for v in (values or []) if str(v).strip() != ""]
+    if not vals:
+        return None
+    for v in vals:
+        if v.upper() in _NOGO_WORDS:
+            return v
+    numeric = [(v, _as_float(v)) for v in vals]
+    numeric = [(v, f) for v, f in numeric if f is not None]
+    if not numeric:
+        return vals[0]
+    c = band_center(d)
+    if c is None:
+        c = sum(f for _, f in numeric) / len(numeric)
+    return max(numeric, key=lambda vf: abs(vf[1] - c))[0]
+
+
 def mirror_measured(d):
     ops = d.get("ops")
     if not ops:
         return d.get("measured")
     best = latest_op(ops)
-    d["measured"] = best[1].get("measured") if best else None
+    rec = best[1] if best else {}
+    readings = rec.get("readings")
+    d["measured"] = (worst_reading(readings, d) if readings
+                     else rec.get("measured"))
     return d["measured"]
 
 

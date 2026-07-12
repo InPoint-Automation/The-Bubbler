@@ -48,7 +48,9 @@ _SYMBOLS = {
     "\u2334": "CBORE", "\u2294": "CBORE",
     "\u2335": "CSINK", "\u2228": "CSINK", "\u22c1": "CSINK",
     "\u21a7": "DEEP", "\u2913": "DEEP", "\u25bd": "DEEP",
-    "\u25bf": "DEEP", "\u25bc": "DEEP", "\u2207": "DEEP",
+    "\u25bf": "DEEP", "\u25bc": "DEEP", "\u25be": "DEEP",
+    "\u2207": "DEEP", "\u22bd": "DEEP", "\u23f7": "DEEP",
+    "\u2304": "DEEP",
 }
 
 _KEYWORDS = [

@@ -164,9 +164,10 @@ class PanelMixin:
         if idx < 0 or idx >= len(self.ledger):
             return
         d = self.ledger[idx]
-        if d.get("page") != self.page_i:
-            return
         self.sel = {d["uid"]}
+        if d.get("page") != self.page_i:
+            self.page_i = d.get("page", 0)
+            self.render()
         bx, by = d.get("bx", d["x"]), d.get("by", d["y"])
         self._flash_ring = (self.page_i, bx, by)
         self.view.centerOn(self._scr(bx, by))

@@ -1,5 +1,12 @@
 # Changelog
 
+### Version v0.2.1
+- Add calculator input in measure field and in app calculator
+- If enter expression e.g. "25-12" in measure field, first enter calculates result for verification and 2nd saves measurement
+- Qty callouts (2x hole etc) take multiple measurements and then pick furthest from of center of tolerance band as 'worst'
+- Improve parsing of hole callouts
+- Window size and position stored after closing
+
 ### Version v0.2.0
 - Reorganize the toolbar ribbons
 - Auto-tier assign in settings

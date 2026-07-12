@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QComboBox, QCheckBox, QDoubleSpinBox,
                                QSizePolicy)
 
-from .common import TYPES, GROUPS, TIERS, is_simple
+from .common import TYPES, TIERS, is_simple
 from .config import units_of
 from .widgets import fill_keyed, combo_key
 from .icons import icon_button, menu_button
@@ -86,6 +86,9 @@ class RibbonMixin:
         self.btn_measure = icon_button("measure", self.toggle_measure,
                                        "Measure mode  M", "Measure",
                                        toggle=True)
+        self.btn_calc = icon_button("calc", self.toggle_calc,
+                                    "Calculator  Ctrl+K", "Calc",
+                                    toggle=True)
         self.btn_panel = icon_button("panel", self.toggle_panel,
                                      "Bubble list  B", "List", toggle=True)
         self.btn_scan = icon_button("scan", self.scan_page, "Scan page",
@@ -94,7 +97,7 @@ class RibbonMixin:
                                         "Scan all pages", "Scan all")
         tb.addWidget(self._rib_group(tr('Bubbles'), [
             icon_button("undo", self.undo, "Undo  Ctrl+Z", "Undo"),
-            self.btn_measure, self.btn_panel,
+            self.btn_measure, self.btn_calc, self.btn_panel,
             self.btn_scan, self.btn_scan_all]))
         tb.addSeparator()
         tb.addWidget(self._rib_group(tr('Data'), [
@@ -121,14 +124,7 @@ class RibbonMixin:
         self.cb_type.setMaximumWidth(110)
         self.cb_type.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.cb_type.activated.connect(
-            lambda _i: self._rib_set("type", combo_key(self.cb_type),
-                                     group=True))
-        self.cb_group = QComboBox()
-        fill_keyed(self.cb_group, GROUPS, self.last["group"])
-        self.cb_group.setMaximumWidth(120)
-        self.cb_group.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.cb_group.activated.connect(
-            lambda _i: self._rib_set("group", combo_key(self.cb_group)))
+            lambda _i: self._rib_set("type", combo_key(self.cb_type)))
 
         self.chk_iso = QCheckBox("ISO 2768")
         self.chk_iso.toggled.connect(self._iso_changed)
@@ -161,7 +157,6 @@ class RibbonMixin:
             lambda _i: self._rib_set("tier", self.cb_tier.currentText()))
         tb.addWidget(self._rib_group(tr('Next bubble'), [
             self._field(tr('type'), self.cb_type),
-            self._field(tr('group'), self.cb_group),
             self._iso_field,
             self._icls_field,
             self._field("tol ±", self.e_tsym),

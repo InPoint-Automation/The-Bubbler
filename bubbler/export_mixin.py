@@ -32,6 +32,16 @@ class ExportMixin:
         e.accept()
 
     def save(self):
+        # abort before write
+        need = sum(1 for d in self.ledger if d.get("sheet_row") is None)
+        free = self.writer.free_rows()
+        if need > free:
+            QMessageBox.critical(
+                self, tr('Sheet full'),
+                tr('%d new bubbles but only %d free rows on the inspection '
+                   'sheet. Nothing was saved. Remove bubbles or start a new '
+                   'sheet.') % (need, free))
+            return
         out_pdf = qc_path(self.pdf_path, "_Inspection.pdf",
                           subdir=self.cfg.get("qc_subdir", "qc"))
         od = os.path.dirname(out_pdf)

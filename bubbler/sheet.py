@@ -55,13 +55,13 @@ def ensure_xlsx(path, company="", sheet_lang="both"):
 
 
 class SheetWriter(object):
-    COLS = (("A", "bubble"), ("B", "type"), ("C", "group"), ("D", "feature"),
-            ("E", "nominal"), ("F", "tol_sym"), ("G", "tol_max"),
-            ("H", "tol_min"), ("I", "pin"), ("J", "offset"),
-            ("L", "measured"), ("N", "tier"), ("O", "gage"))
-    NUMCOLS = {"E", "F", "G", "H", "I", "J"}
+    COLS = (("A", "bubble"), ("B", "type"), ("C", "feature"),
+            ("D", "nominal"), ("E", "tol_sym"), ("F", "tol_max"),
+            ("G", "tol_min"), ("H", "pin"), ("I", "offset"),
+            ("K", "measured"), ("M", "tier"), ("N", "gage"))
+    NUMCOLS = {"D", "E", "F", "G", "H", "I"}
 
-    LOC_COLS = {"type", "group"}
+    LOC_COLS = {"type"}
 
     def __init__(self, path, sheet_lang="both"):
         self.path = path
@@ -85,6 +85,16 @@ class SheetWriter(object):
                 return r
         return None
 
+    def free_rows(self):
+        """Unused template rows (new-bubble capacity)."""
+        return sum(1 for r in range(FIRST_ROW, LAST_ROW + 1)
+                   if self.ws["A%d" % r].value in (None, ""))
+
+    @staticmethod
+    def _safe_text(v):
+        s = str(v)
+        return "'" + s if s[:1] in ("=", "+", "-", "@") else s
+
     def write_row(self, r, d):
         for col, key in self.COLS:
             v = d.get(key, None)
@@ -96,14 +106,14 @@ class SheetWriter(object):
                 try:
                     self.ws["%s%d" % (col, r)] = float(str(v).replace(",", "."))
                 except ValueError:
-                    self.ws["%s%d" % (col, r)] = str(v)
-            elif col == "L":
+                    self.ws["%s%d" % (col, r)] = self._safe_text(v)
+            elif key == "measured":         # numeric if it parses, else text
                 try:
-                    self.ws["L%d" % r] = float(str(v).replace(",", "."))
+                    self.ws["%s%d" % (col, r)] = float(str(v).replace(",", "."))
                 except ValueError:
-                    self.ws["L%d" % r] = str(v)
+                    self.ws["%s%d" % (col, r)] = self._safe_text(v)
             else:
-                self.ws["%s%d" % (col, r)] = str(v)
+                self.ws["%s%d" % (col, r)] = self._safe_text(v)
 
     def clear_row(self, r):
         for col, _ in self.COLS:

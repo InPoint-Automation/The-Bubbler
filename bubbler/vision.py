@@ -51,7 +51,29 @@ def available(cfg=None):
             "symbols": geom and _symbol_session(cfg or {}) is not None,
             "region": geom and _region_session(cfg or {}) is not None,
             "vlm": vlm,
-            "gpu": _has_gpu_ep()}
+            "gpu": _has_gpu_ep(),
+            "providers": _ort_providers(),
+            "reasons": dict(_REASONS)}
+
+
+def _ort_providers():
+    """Available onnxruntime execution providers"""
+    try:
+        import onnxruntime as ort
+        _REASONS.pop("onnxruntime", None)
+        return list(ort.get_available_providers())
+    except Exception as e:
+        _REASONS["onnxruntime"] = "onnxruntime not importable (%s)" % e
+        return []
+
+
+_REASONS = {}
+
+
+def _note(key, msg):
+    """Record why a pass is unavailabl"""
+    _REASONS[key] = msg
+    _warn(msg)
 
 
 def _warn(msg):
@@ -93,6 +115,19 @@ def _providers(cfg):
     return out or ["CPUExecutionProvider"]
 
 
+def _make_session(ort, path, cfg):
+    """Open session"""
+    prefer = _providers(cfg)
+    try:
+        return ort.InferenceSession(path, providers=prefer)
+    except Exception as e:
+        if prefer == ["CPUExecutionProvider"]:
+            raise
+        _note("ep", "%s failed to init (%s); running vision on CPU"
+              % (prefer[0], e))
+        return ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+
+
 def _has_gpu_ep():
     try:
         import onnxruntime as ort
@@ -108,6 +143,7 @@ def reset_sessions():
     _SYM_SESS = _RGN_SESS = _OCR = _PADDLE = _VLM = None
     _SYM_TRIED = _RGN_TRIED = _OCR_TRIED = _PADDLE_TRIED = _VLM_TRIED = False
     _EP_LOGGED = False
+    _REASONS.clear()
 
 
 def _sparse(words, threshold=4):
@@ -185,6 +221,31 @@ def _rot_matrix(page):
 def _xform_rect(m, x0, y0, x1, y1):
     from .scanpos import xform_rect
     return xform_rect(m, x0, y0, x1, y1)
+
+
+def _glyph_keyword(tok):
+    """GD&T keyword"""
+    from .scanlib import _GDT_SYMBOLS
+    for glyph, kw in _GDT_SYMBOLS:
+        if glyph == tok:
+            return kw.strip().upper()
+    return None
+
+
+def _block_glyphs(block_words):
+    """dedup lookups."""
+    return " ".join(str(w[4]) for w in block_words).upper()
+
+
+def _glyph_present(tok, have_upper):
+    """Glyph or its keyword already in text"""
+    t = (tok or "").strip().upper()
+    if t and any(w.startswith(t) for w in have_upper.split()):
+        return True
+    kw = _glyph_keyword(tok)
+    if kw and kw in have_upper:
+        return True
+    return False
 
 
 def _attach_or_append(out, rect, symbol):
@@ -266,8 +327,9 @@ def _ocr_engine():
     try:
         from rapidocr_onnxruntime import RapidOCR
         _OCR = RapidOCR()
+        _REASONS.pop("ocr", None)
     except Exception as e:
-        _warn("RapidOCR unavailable (%s); OCR pass disabled" % e)
+        _note("ocr", "RapidOCR unavailable (%s); OCR pass disabled" % e)
         _OCR = None
     return _OCR
 
@@ -461,13 +523,14 @@ def _symbol_session(cfg):
             return _SYM_SESS
         path = _model_path(cfg or {})
         if path is None:
-            _warn("symbol model not found (bundled gdt_symbols.onnx missing); "
-                  "symbol pass disabled")
+            _note("symbols", "symbol model not found (bundled gdt_symbols.onnx "
+                  "missing); symbol pass disabled")
             _SYM_TRIED = True
             return None
         try:
             import onnxruntime as ort
-            _SYM_SESS = ort.InferenceSession(path, providers=_providers(cfg))
+            _SYM_SESS = _make_session(ort, path, cfg)
+            _REASONS.pop("symbols", None)
             if not _EP_LOGGED:
                 _warn("execution provider: %s"
                       % ", ".join(_SYM_SESS.get_providers()))
@@ -476,11 +539,13 @@ def _symbol_session(cfg):
             if nc is None:
                 _warn("could not read symbol model class count; guard skipped")
             elif nc != len(_SYM_CLASSES):
-                _warn("symbol model class mismatch: model nc=%d, code expects %d "
-                      "(train/classes.txt); reads may misclassify -- retrain/"
-                      "re-export recommended" % (nc, len(_SYM_CLASSES)))
+                _note("symbols", "symbol model class mismatch: model nc=%d, "
+                      "code expects %d (train/classes.txt); reads may "
+                      "misclassify -- retrain/re-export recommended"
+                      % (nc, len(_SYM_CLASSES)))
         except Exception as e:
-            _warn("onnxruntime/model unavailable (%s); symbol pass disabled" % e)
+            _note("symbols", "onnxruntime/model unavailable (%s); symbol pass "
+                  "disabled" % e)
             _SYM_SESS = None
         _SYM_TRIED = True
         return _SYM_SESS
@@ -497,12 +562,26 @@ def clear_cache():
         _DET_CACHE.clear()
 
 
+def _model_stat(path):
+    """(mtime, size) for a model file"""
+    try:
+        import os
+        st = os.stat(path)
+        return (int(st.st_mtime), st.st_size)
+    except Exception:
+        return None
+
+
 def _det_sig(cfg):
     keys = ("vision_dpi", "vision_imgsz", "vision_tile", "vision_tile_overlap",
             "vision_merge", "vision_sym_conf", "vision_region_conf",
             "vision_nms_iou", "vision_model", "vision_region_model",
             "vision_ep", "vision_symbols", "vision_region")
-    return tuple((cfg or {}).get(k) for k in keys)
+    cfg = cfg or {}
+    base = tuple(cfg.get(k) for k in keys)
+    stamp = (_model_stat(_model_path(cfg)),
+             _model_stat(_region_model_path(cfg)))
+    return base + stamp
 
 
 def _cache_key(page, cfg, tag):
@@ -704,13 +783,14 @@ def _region_session(cfg):
             return _RGN_SESS
         path = _region_model_path(cfg or {})
         if path is None:
-            _warn("region model not found (gdt_regions.onnx); "
+            _note("region", "region model not found (gdt_regions.onnx); "
                   "block grouping falls back to geometry")
             _RGN_TRIED = True
             return None
         try:
             import onnxruntime as ort
-            _RGN_SESS = ort.InferenceSession(path, providers=_providers(cfg))
+            _RGN_SESS = _make_session(ort, path, cfg)
+            _REASONS.pop("region", None)
             if not _EP_LOGGED:
                 _warn("execution provider: %s"
                       % ", ".join(_RGN_SESS.get_providers()))
@@ -719,11 +799,11 @@ def _region_session(cfg):
             if nc is None:
                 _warn("could not read region model class count; guard skipped")
             elif nc != len(_REGION_CLASSES):
-                _warn("region model class mismatch: model nc=%d, code expects %d; "
-                      "reads may misclassify -- retrain/re-export recommended"
-                      % (nc, len(_REGION_CLASSES)))
+                _note("region", "region model class mismatch: model nc=%d, code "
+                      "expects %d; reads may misclassify -- retrain/re-export "
+                      "recommended" % (nc, len(_REGION_CLASSES)))
         except Exception as e:
-            _warn("region model unavailable (%s); block grouping uses "
+            _note("region", "region model unavailable (%s); block grouping uses "
                   "geometry" % e)
             _RGN_SESS = None
         _RGN_TRIED = True
@@ -836,23 +916,25 @@ def _fcf_tol_text(words):
             parts.append(s)
     txt = " ".join(parts)
     txt = re.sub(r"[()]", " ", txt)
-    m = re.search(r"(Ø?\s*[\d]+(?:[.,]\d+)?)(?:\s*([MLSP])\b)?", txt)
+    # allow leading-dot value
+    m = re.search(r"(Ø?\s*(?:\d+(?:[.,]\d+)?|[.,]\d+))(?:\s*([MLSP])\b)?", txt)
     if not m:
         return ""
     tol = re.sub(r"\s+", "", m.group(1))
+    tol = re.sub(r"^(Ø?)([.,])", r"\g<1>0\2", tol)   # .5 -> 0.5
     mod = (" " + m.group(2)) if m.group(2) else ""
     return tol + mod
 
 
 def _fcf_datum_tokens(words):
+    # join words first
+    txt = " ".join(re.sub(r"[()]", " ", str(w[4])) for w in words)
     out = []
-    for w in words:
-        s = re.sub(r"[()]", " ", str(w[4]))
-        for mt in re.finditer(r"\b([A-Z])\b(?:\s*([MLSP])\b)?", s):
-            d = mt.group(1)
-            if mt.group(2):
-                d += mt.group(2)
-            out.append(d)
+    for mt in re.finditer(r"\b([A-Z](?:-[A-Z])?)\b(?:\s*([MLSP])\b)?", txt):
+        d = mt.group(1)
+        if mt.group(2):
+            d += mt.group(2)
+        out.append(d)
     return out
 
 
@@ -926,8 +1008,11 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
             reader = "ocr"
         else:
             block_words = in_block
-        inject = bool(sym_dets) and reader != "text"
+        # inject glyphs for any reader
+        inject = bool(sym_dets)
         if reader == "vlm" and not cfg.get("vision_sym_inject_vlm", True):
+            inject = False
+        if reader == "text" and not cfg.get("vision_sym_inject_text", True):
             inject = False
         if inject:
             block_words = list(block_words)
@@ -938,8 +1023,11 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
                 crop = _symbol_dets_clip(page, cfg, brect)
                 if crop:
                     block_syms = _dedup_syms(crop, block_syms)
+            have = _block_glyphs(block_words)
             for env, tok in block_syms:
                 if cat is not None and not common.admits(constraint, tok):
+                    continue
+                if _glyph_present(tok, have):
                     continue
                 _attach_or_append(block_words, env, tok)
         hits = None

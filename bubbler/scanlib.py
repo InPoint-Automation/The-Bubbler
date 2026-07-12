@@ -85,7 +85,8 @@ def scan_normalize(t):
     for _s in ("\u2335", "\u2228", "\u22c1"):
         t = t.replace(_s, " CSINK ")
     for _s in ("\u21a7", "\u2913", "\u25bd", "\u25bf",
-               "\u25bc", "\u2207"):
+               "\u25bc", "\u25be", "\u2207", "\u22bd", "\u23f7",
+               "\u2304"):
         t = t.replace(_s, " DEEP ")
     t = _re.sub(r"//(?=\s*[\d.,])", " PARALLELISM ", t)
     if any(s in t for s, _ in _GDT_SYMBOLS):
@@ -142,6 +143,13 @@ _MOD_TXT = {"Ⓜ": "M", "Ⓛ": "L", "Ⓢ": "S", "Ⓟ": "P",
 _GDT_DATUM = (r"(?P<datums>(?:\s+[A-Z](?![A-Za-z0-9])"
               r"(?:\s*\(\s*[MLSP]\s*\))?){0,3})")
 
+_GDT_MAX_DATUMS = {
+    "FLATNESS": 0, "STRAIGHTNESS": 0, "CIRCULARITY": 0, "CYLINDRICITY": 0,
+    "POSITION": 3, "PROFILE": 3,
+    "PERPENDICULARITY": 3, "PARALLELISM": 3, "ANGULARITY": 3,
+    "RUNOUT": 2, "CONCENTRICITY": 2,
+}
+
 
 def _gdt_modifier(m):
     """ ' M' / ' L' / ' S' / ' P' suffix for a GD&T feature string, or ''. """
@@ -157,17 +165,26 @@ def _gdt_modifier(m):
     return (" " + _MOD_TXT.get(raw.upper(), raw.upper())) if raw else ""
 
 
-def _gdt_datums(m):
+def _gdt_datums(m, subtype=None):
     """ ' | A | B | C' datum suffix for a GD&T feature string, or ''. """
     try:
         raw = m.group("datums")
     except (IndexError, _re.error):
         return ""
-    if not raw or not raw.strip():
+    cap = _GDT_MAX_DATUMS.get(subtype, 3)
+    if cap == 0 or not raw or not raw.strip():
         return ""
     parts = [_re.sub(r"\s+", "", d)
              for d in _re.findall(r"[A-Z](?:\s*\(\s*[MLSP]\s*\))?", raw)]
+    parts = parts[:cap]
     return (" | " + " | ".join(parts)) if parts else ""
+
+
+def _gdt(name, m, dia=False):
+    """Assemble a GD&T feature string: NAME [Ø]value [mod] [| datums]."""
+    val = m.group(1)
+    zone = ("Ø" + val) if dia else val
+    return name + " " + zone + _gdt_modifier(m) + _gdt_datums(m, name)
 
 
 # order matters; earlier patterns claim spans first
@@ -181,53 +198,67 @@ SCAN_PATS = [
      lambda m: (m.group(0).strip(), None)),
     ("GDT", "POSITION",
      r"(?:TRUE\s*POS(?:ITION)?|T\.P\.)\s*[\u00d8]?\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("POSITION \u00d8" + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("POSITION", m, dia=True), m.group(1))),
     ("GDT", "FLATNESS", r"FLATNESS\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("FLATNESS " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("FLATNESS", m), m.group(1))),
     ("GDT", "STRAIGHTNESS", r"STRAIGHTNESS\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("STRAIGHTNESS " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("STRAIGHTNESS", m), m.group(1))),
     ("GDT", "CIRCULARITY", r"(?:CIRCULARITY|ROUNDNESS)\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("CIRCULARITY " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("CIRCULARITY", m), m.group(1))),
     ("GDT", "CYLINDRICITY", r"CYLINDRICITY\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("CYLINDRICITY " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("CYLINDRICITY", m), m.group(1))),
     ("GDT", "PARALLELISM", r"PARALLELISM\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("PARALLELISM " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("PARALLELISM", m), m.group(1))),
     ("GDT", "PERPENDICULARITY",
      r"PERP(?:ENDICUL(?:ARITY)?)?\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("PERPENDICULARITY " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("PERPENDICULARITY", m), m.group(1))),
     ("GDT", "ANGULARITY", r"ANGULARITY\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("ANGULARITY " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("ANGULARITY", m), m.group(1))),
     ("GDT", "RUNOUT",
      r"(?:CIRCULAR\s*)?(?:RUNOUT|TIR|FIM)\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("RUNOUT " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("RUNOUT", m), m.group(1))),
     ("GDT", "CONCENTRICITY",
      r"(?:CONCENTRICITY|COAXIALITY)\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("CONCENTRICITY " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("CONCENTRICITY", m), m.group(1))),
     ("GDT", "PROFILE",
      r"PROFILE\s*(?:OF\s*A?\s*(?:LINE|SURFACE))?\s*([\d.,]+)" + _GDT_MOD + _GDT_DATUM,
-     lambda m: ("PROFILE " + m.group(1) + _gdt_modifier(m) + _gdt_datums(m), m.group(1))),
+     lambda m: (_gdt("PROFILE", m), m.group(1))),
     ("SURFACE", None,
      r"(?:Rmax|Rsm|Ra|Rz|Rq|Rt|Rp|Rv)\s*(?:=\s*)?([\d.,]+)\s*"
      r"(?:[\u00b5u]in|[\u00b5u]m|micron)?",
      lambda m: (m.group(0).strip(), None)),
     ("FIT", None,
-     r"(\u00d8?)[ \t]*(\d+(?:[.,]\d+)?)[ \t]*"
+     r"(?:(\d+)\s*[Xx\u00d7]\s*)?(\u00d8?)[ \t]*(\d+(?:[.,]\d+)?)[ \t]*"
      r"((?:[A-Z]{1,2}|[a-z]{1,2})[ ]?\d{1,2}(?:\s*/\s*"
      r"(?:[A-Z]{1,2}|[a-z]{1,2})[ ]?\d{1,2})?)(?![\w\u00b0])",
-     lambda m: ((m.group(1) + m.group(2) + " " +
-                 m.group(3).replace(" ", ""))
-                if _fit_ok(m.group(3).replace(" ", ""))
-                else None, m.group(3).replace(" ", ""))),
+     lambda m: (((m.group(1) + "X " if m.group(1) else "") +
+                 m.group(2) + m.group(3) + " " +
+                 m.group(4).replace(" ", ""))
+                if _fit_ok(m.group(4).replace(" ", ""))
+                else None, m.group(4).replace(" ", ""))),
     ("DIAMETER", "CBORE",
-     r"(?:C'?BORE|CBORE)\s*\u00d8?\s*(\d+(?:[.,]\d+)?)",
+     r"(?:C'?BORE|CBORE|\u2334)\s*\u00d8\s*(\d+(?:[.,]\d+)?)",
      lambda m: ("CBORE \u00d8" + m.group(1), None)),
+    ("DIAMETER", "CBORE",
+     r"\u00d8\s*(\d+(?:[.,]\d+)?)\s*(?:C'?BORE|CBORE|\u2334)",
+     lambda m: ("CBORE \u00d8" + m.group(1), None)),
+    ("DIAMETER", "CBORE",
+     r"(?:C'?BORE|CBORE|\u2334)\s*(\d+(?:[.,]\d+)?)",
+     lambda m: ("CBORE " + m.group(1), None)),
     ("DIAMETER", "CSINK",
-     r"(?:C'?SINK|CSK)\s*\u00d8?\s*(\d+(?:[.,]\d+)?)"
-     r"(?:\s*[xX\u00d7]\s*(\d+(?:[.,]\d+)?)\s*\u00b0)?",
+     r"(?:C'?SINK|CSK|\u2335)\s*\u00d8?\s*(\d+(?:[.,]\d+)?)"
+     r"(?:\s*[xX\u00d7]\s*(\d+(?:[.,]\d+)?)\s*\u00b0?)?",
      lambda m: ("CSINK \u00d8" + m.group(1) +
                 (" X" + m.group(2) + "\u00b0" if m.group(2) else ""), None)),
+    ("DIAMETER", "CSINK",
+     r"\u00d8\s*(\d+(?:[.,]\d+)?)\s*[xX\u00d7]\s*(\d+(?:[.,]\d+)?)\s*\u00b0",
+     lambda m: ("CSINK \u00d8" + m.group(1) + " X" + m.group(2) + "\u00b0",
+                None)),
     ("DEPTH", None,
-     r"\bDEEP\b\.?\s*\u00d8?\s*(\d+(?:[.,]\d+)?)",
+     r"(?<![\d\u00d8.,\u00b1+\-])(?<!\u00d8 )(\d+(?:[.,]\d+)?)\s*(?:DEEP|DEPTH|\u21a7)\b",
+     lambda m: ("DEEP " + m.group(1), None)),
+    ("DEPTH", None,
+     r"\b(?:DEEP|DEPTH|\u21a7)\b\.?\s*\u00d8?\s*(\d+(?:[.,]\d+)?)",
      lambda m: ("DEEP " + m.group(1), None)),
     ("DIAMETER", None,
      r"(?:(\d+)\s*[Xx\u00d7]\s*)?\u00d8\s*(\d+(?:[.,]\d+)?)\s*"
@@ -240,6 +271,9 @@ SCAN_PATS = [
      r"(?:^|[\s,(])R\s*(\d+(?:[.,]\d+)?)(?:\s*\u00b1\s*([\d.,]+))?",
      lambda m: ("R" + m.group(1),
                 ("\u00b1" + m.group(2)) if m.group(2) else None)),
+    ("SLOT", None,
+     r"(?<![\u00d8\d,.])(\d+[.,]\d+)\s*[Xx\u00d7]\s*(\d+[.,]\d+)(?!\s*[\u00b0Xx\u00d7\d])",
+     lambda m: (m.group(1) + " X " + m.group(2), None)),
     ("CHAMFER", None,
      r"(\d+(?:[.,]\d+)?)\s*[xX\u00d7]\s*45(?:[.,]0{1,2})?\s*\u00b0",
      lambda m: (m.group(0).replace(" ", ""), None)),
@@ -375,7 +409,7 @@ def scan_to_row(d):
     """Classified scan hit -> ledger row dict (no position yet)."""
     sym, tmax, tmin = parse_tol_string(d.get("t"))
     tp = d["tp"]
-    row = {"type": "dim", "group": "LWH", "feature": d["v"],
+    row = {"type": "dim", "feature": d["v"],
            "nominal": None, "tol_sym": sym, "tol_max": tmax,
            "tol_min": tmin, "pin": None, "offset": None,
            "measured": None, "tier": ""}
@@ -386,37 +420,38 @@ def scan_to_row(d):
         except ValueError:
             return None
 
-    if tp == "DEPTH":
+    if tp == "SLOT":
+        m = _re.search(r"(\d+(?:[.,]\d+)?)", d["v"])
+        row.update(type="slot", nominal=num(m.group(1)) if m else None)
+    elif tp == "DEPTH":
         m = _re.search(r"(\d+(?:[.,]\d+)?)", d["v"])
         row.update(type="depth / g\u0142\u0119boko\u015b\u0107",
-                   group="holes \u00d8 / otwory",
                    nominal=num(m.group(1)) if m else None)
     elif tp == "THREAD":
-        row.update(type="thread", group="threads")
+        row.update(type="thread")
     elif tp == "GDT":
         zone = num(d.get("t") or "")
-        row.update(type="GD&T", group="GD&T", nominal=0.0,
+        row.update(type="GD&T", nominal=0.0,
                    tol_sym=None, tol_max=zone, tol_min=0.0)
     elif tp == "SURFACE":
-        row.update(type="finish / wyko\u0144czenie",
-                   group="finish / wyko\u0144czenie")
+        row.update(type="finish / wyko\u0144czenie")
     elif tp == "DIAMETER":
         m = _re.search(r"\u00d8\s*(\d+(?:[.,]\d+)?)", d["v"])
-        row.update(type="hole / otw\u00f3r", group="holes \u00d8 / otwory",
+        row.update(type="hole / otw\u00f3r",
                    nominal=num(m.group(1)) if m else num(d["v"]))
         if d.get("thru"):
             row.update(type="thru",
                        feature=row["feature"] + " THRU")
     elif tp == "FIT":
-        m = _re.match(r"\s*\u00d8?\s*(\d+(?:[.,]\d+)?)", d["v"])
+        m = _re.match(r"\s*(?:\d+\s*[Xx\u00d7]\s*)?\u00d8?\s*(\d+(?:[.,]\d+)?)",
+                      d["v"])
         nominal = num(m.group(1)) if m else None
         code = (d.get("t") or "").replace(" ", "")
         is_hole = bool(code) and code[0].isupper()
         row.update(nominal=nominal,
                    feature=d["v"] + " (fit " + (d.get("t") or "") + ")")
         if is_hole:
-            row.update(type="hole / otw\u00f3r",
-                       group="holes \u00d8 / otwory")
+            row.update(type="hole / otw\u00f3r")
         if code and "/" not in code and nominal is not None:
             from .iso286 import fit_limits
             lim = fit_limits(nominal, code)
@@ -424,23 +459,14 @@ def scan_to_row(d):
                 row.update(tol_max=lim[0], tol_min=lim[1])
     elif tp == "CHAMFER":
         m = _re.search(r"(\d+(?:[.,]\d+)?)", d["v"])
-        row.update(group="other",
-                   nominal=num(m.group(1)) if m else None)
+        row.update(nominal=num(m.group(1)) if m else None)
     elif tp == "RADIUS":
         row.update(nominal=num(d["v"]))
     elif tp == "ANGLE":
-        row.update(group="GD&T", nominal=num(d["v"]))
+        row.update(nominal=num(d["v"]))
     else:
         row.update(nominal=num(d["v"]))
     return row
-
-
-def _position_row(axis, pin, tier):
-    """Blank X/Y location row carrying gage pin Ø."""
-    return {"type": "position", "group": "positions",
-            "feature": axis, "nominal": None, "tol_sym": None,
-            "tol_max": None, "tol_min": None, "pin": pin, "offset": None,
-            "measured": None, "tier": tier}
 
 
 _REPEAT_RE = _re.compile(r"^\s*(\d+)\s*[Xx×](?=\s|Ø|$)")
@@ -460,36 +486,13 @@ def strip_repeat(feature):
 
 
 def expand_hole_row(row, cfg=None, repeat=True):
-    """Ledger row -> Ø + X/Y rows, honoring N× repeat."""
-    cfg = cfg or {}
-
-    def _expand_one(r):
-        rows = [r]
-        feat = str(r.get("feature") or "").upper().lstrip()
-        is_hole = (str(r.get("type") or "").startswith(("hole", "thru"))
-                   and not feat.startswith(("CBORE", "CSINK")))
-        if is_hole and cfg.get("hole_position_rows", False):
-            pin = r.get("pin")
-            if pin is None and cfg.get("hole_pin_auto", False):
-                pin = r.get("nominal")
-            r["pin"] = None
-            tier = r.get("tier", "")
-            rows.append(_position_row("X", pin, tier))
-            rows.append(_position_row("Y", pin, tier))
-        return rows
-
-    n = repeat_count(row.get("feature")) if repeat else 1
-    if n <= 1:
-        if repeat:
-            row["feature"] = strip_repeat(row.get("feature"))
-        return _expand_one(row)
-    clean = strip_repeat(row.get("feature"))
-    out = []
-    for _ in range(n):
-        r = dict(row)
-        r["feature"] = clean
-        out.extend(_expand_one(r))
-    return out
+    """N× count -> row `qty`, not N bubbles or X/Y sub-rows."""
+    if repeat:
+        n = repeat_count(row.get("feature"))
+        if n > 1:
+            row["qty"] = n
+        row["feature"] = strip_repeat(row.get("feature"))
+    return [row]
 
 
 def scan_to_rows(d, cfg=None, repeat=True):
@@ -550,9 +553,7 @@ def suggest_gage(d, enabled=None, cmm_tol=0.01, mic_tol=0.03):
     t = (d.get("type") or "")
     if t.startswith("thread"):
         ideal = "GO gauge"
-    elif (d.get("group") or "").startswith("GD&T") or \
-            t.startswith("position") or \
-            (d.get("group") or "").startswith("positions"):
+    elif t.startswith("GD&T") or t.startswith("position"):
         ideal = "CMM"
     else:
         tol = d.get("tol_sym")

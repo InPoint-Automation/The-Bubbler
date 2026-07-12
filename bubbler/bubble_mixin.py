@@ -123,8 +123,7 @@ class BubbleMixin:
         else:
             feat = ""
         pin = fnum(self.last.get("pin", "") or "")
-        d = {"bubble": str(nxt), "type": t,
-             "group": self.last.get("group", ""), "feature": feat,
+        d = {"bubble": str(nxt), "type": t, "feature": feat,
              "nominal": nom, "tier": self.last.get("tier", ""),
              "pin": pin, "offset": None, "measured": None,
              "tol_sym": None, "tol_max": None, "tol_min": None}

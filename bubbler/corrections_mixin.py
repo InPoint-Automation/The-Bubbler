@@ -79,7 +79,7 @@ class CorrectionsMixin:
             ax, ay = d.get("x", 0.0), d.get("y", 0.0)
             rect = self._capture_box(ax, ay)
         reader = {k: d.get(k) for k in
-                  ("type", "group", "feature", "nominal", "tol_sym",
+                  ("type", "feature", "nominal", "tol_sym",
                    "tol_max", "tol_min", "datums", "tier")
                   if d.get(k) is not None}
         self._collect_correction(tuple(rect), reader=reader)

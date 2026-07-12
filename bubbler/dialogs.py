@@ -9,10 +9,9 @@ from PySide6.QtWidgets import (QDialog, QGridLayout, QHBoxLayout, QVBoxLayout,
                                QSpinBox, QPushButton, QFrame, QWidget,
                                QMessageBox)
 
-from .common import TYPES, GROUPS, TIERS, GROUP_OF, fnum, dp_tol
+from .common import TYPES, TIERS, fnum, dp_tol
 from .config import units_of
 from .widgets import fill_keyed, combo_key, set_combo_key
-from .numbering import LETTERS
 from .iso2768 import iso2768_tol
 from .iso286 import fit_limits, is_fit_code
 from .i18n import tr, retranslate
@@ -62,7 +61,6 @@ class BubbleDialog(QDialog):
                     "tier": cfg.get("default_tier", ""),
                     "iso_on": bool(cfg.get("rib_iso_on")),
                     "icls": cfg.get("default_iso_class", "m")}
-            last["group"] = GROUP_OF.get(last["type"], GROUPS[0])
         self.iso_on = bool(last.get("iso_on")) and not self.edit
         self.icls = str(last.get("icls", "m"))
         self._tsym_user = False
@@ -96,14 +94,6 @@ class BubbleDialog(QDialog):
         g.addWidget(self.cb_type, r, 1, Qt.AlignLeft)
         r += 1
 
-        g.addWidget(QLabel(tr('Group')), r, 0, Qt.AlignLeft)
-        self.cb_group = QComboBox()
-        fill_keyed(self.cb_group, GROUPS, last.get("group", GROUPS[0]))
-        self.v_group = Var(lambda: combo_key(self.cb_group),
-                           lambda v: set_combo_key(self.cb_group, v))
-        g.addWidget(self.cb_group, r, 1, Qt.AlignLeft)
-        r += 1
-
         g.addWidget(QLabel(tr('Feature')), r, 0, Qt.AlignLeft)
         self.e_feat = _line_edit(220)
         self.v_feat = Var(self.e_feat.text, self.e_feat.setText)
@@ -129,66 +119,20 @@ class BubbleDialog(QDialog):
         g.addWidget(self.e_ref, r, 1, Qt.AlignLeft)
         r += 1
 
-        self.cb_adv = QCheckBox(tr('Hole XY+Ø sub-rows'))
-        self.cb_adv.setChecked(bool(cfg.get("hole_position_rows", False))
-                               and not self.edit)
-        self.v_adv = Var(self.cb_adv.isChecked, self.cb_adv.setChecked)
-        self.cb_adv.toggled.connect(lambda _b: self._toggle_adv())
-        g.addWidget(self.cb_adv, r, 0, 1, 2, Qt.AlignLeft)
+        # worst kept
+        g.addWidget(QLabel(tr('Qty ×')), r, 0, Qt.AlignLeft)
+        self.sp_qty = QSpinBox()
+        self.sp_qty.setRange(1, 999)
+        self.sp_qty.setValue(1)
+        self.sp_qty.setMaximumWidth(70)
+        self.sp_qty.setToolTip(
+            tr('Quantity of instances; the measure walk takes that many '
+               'readings and keeps the worst.'))
+        self.v_qty = Var(lambda: self.sp_qty.value(),
+                         lambda s: self.sp_qty.setValue(
+                             int(float(str(s).replace(",", ".") or 1))))
+        g.addWidget(self.sp_qty, r, 1, Qt.AlignLeft)
         r += 1
-
-        advw = QWidget()
-        advl = QHBoxLayout(advw)
-        advl.setContentsMargins(0, 0, 0, 0)
-        advl.addWidget(QLabel(tr('X:')))
-        self.e_hx = _line_edit(70)
-        self.e_hx.setEnabled(False)
-        advl.addWidget(self.e_hx)
-        advl.addWidget(QLabel(tr('Y:')))
-        self.e_hy = _line_edit(70)
-        self.e_hy.setEnabled(False)
-        advl.addWidget(self.e_hy)
-        advl.addStretch(1)
-        self.v_hx = Var(self.e_hx.text, self.e_hx.setText)
-        self.v_hy = Var(self.e_hy.text, self.e_hy.setText)
-        g.addWidget(advw, r, 0, 1, 2)
-        r += 1
-
-        patw = QWidget()
-        patl = QVBoxLayout(patw)
-        patl.setContentsMargins(0, 0, 0, 0)
-        topl = QHBoxLayout()
-        topl.setContentsMargins(0, 0, 0, 0)
-        topl.addWidget(QLabel(tr('pattern ×')))
-        self.sp_pn = QSpinBox()
-        self.sp_pn.setRange(1, 99)
-        self.sp_pn.setValue(1)
-        self.sp_pn.setEnabled(False)
-        self.v_pn = Var(lambda: str(self.sp_pn.value()),
-                        lambda s: self.sp_pn.setValue(int(float(
-                            str(s).replace(",", ".") or 1))))
-        topl.addWidget(self.sp_pn)
-        topl.addWidget(QLabel(tr('shared:')))
-        self.cmb_share = QComboBox()
-        self.cmb_share.addItems([tr('X & Y differ'), tr('same X as #1'),
-                                 tr('same Y as #1')])
-        self.cmb_share.setEnabled(False)
-        topl.addWidget(self.cmb_share)
-        topl.addStretch(1)
-        patl.addLayout(topl)
-        self.holes_box = QWidget()
-        self.holes_grid = QGridLayout(self.holes_box)
-        self.holes_grid.setContentsMargins(0, 0, 0, 0)
-        self.e_hxs, self.e_hys, self.v_hxs, self.v_hys = [], [], [], []
-        patl.addWidget(self.holes_box)
-        g.addWidget(patw, r, 0, 1, 2)
-        r += 1
-        self.sp_pn.valueChanged.connect(lambda _v: self._build_holes())
-        self.cmb_share.currentIndexChanged.connect(
-            lambda _i: self._apply_share())
-        self.e_hx.textChanged.connect(lambda _t: self._mirror_shared())
-        self.e_hy.textChanged.connect(lambda _t: self._mirror_shared())
-        self._build_holes()
 
         dpw = QWidget()
         dpl = QHBoxLayout(dpw)
@@ -315,8 +259,8 @@ class BubbleDialog(QDialog):
     def _prefill(self, d):
         if d.get("type"):
             self.v_type.set(d["type"])
-        if d.get("group"):
-            self.v_group.set(d["group"])
+        if d.get("qty"):
+            self.v_qty.set(d["qty"])
         if d.get("tier"):
             self.v_tier.set(d["tier"])
         if d.get("feature"):
@@ -353,16 +297,10 @@ class BubbleDialog(QDialog):
 
     def _type_changed(self, user=False):
         t = self.v_type.get()
-        if user:
-            self.v_group.set(GROUP_OF.get(t, self.v_group.get()))
         hole = t.startswith(("hole", "thru"))
-        self.cb_adv.setEnabled(hole and not self.edit)
         st = hole and not self.edit
         for e in (self.e_dep, self.e_cbd, self.e_cbz):
             e.setEnabled(st)
-        if not hole:
-            self.v_adv.set(False)
-            self._toggle_adv()
         dimensional = t != "GD&T" and not t.startswith("finish")
         self.e_pin.setEnabled(dimensional)
         self.chk_inv.setEnabled(dimensional)
@@ -376,61 +314,6 @@ class BubbleDialog(QDialog):
             else:
                 self.lbl_ipre.setStyleSheet("color:#1f6e3c;")
             self._iso_autofill()
-
-    def _toggle_adv(self):
-        st = bool(self.v_adv.get())
-        for e in (self.e_hx, self.e_hy, self.sp_pn, self.cmb_share):
-            e.setEnabled(st)
-        self._apply_share()
-
-    def _share_mode(self):
-        return ("", "x", "y")[self.cmb_share.currentIndex()]
-
-    def _build_holes(self):
-        old_x = [v.get() for v in self.v_hxs]
-        old_y = [v.get() for v in self.v_hys]
-        while self.holes_grid.count():
-            w = self.holes_grid.takeAt(0).widget()
-            if w is not None:
-                w.setParent(None)
-        self.e_hxs, self.e_hys, self.v_hxs, self.v_hys = [], [], [], []
-        n = self.sp_pn.value()
-        if n > 1:
-            self.holes_grid.addWidget(QLabel("#"), 0, 0)
-            self.holes_grid.addWidget(QLabel(tr('X')), 0, 1)
-            self.holes_grid.addWidget(QLabel(tr('Y')), 0, 2)
-        for k in range(1, n):
-            self.holes_grid.addWidget(QLabel("#%d" % (k + 1)), k, 0)
-            ex, ey = _line_edit(70), _line_edit(70)
-            if k - 1 < len(old_x):
-                ex.setText(old_x[k - 1])
-            if k - 1 < len(old_y):
-                ey.setText(old_y[k - 1])
-            self.holes_grid.addWidget(ex, k, 1)
-            self.holes_grid.addWidget(ey, k, 2)
-            self.e_hxs.append(ex)
-            self.e_hys.append(ey)
-            self.v_hxs.append(Var(ex.text, ex.setText))
-            self.v_hys.append(Var(ey.text, ey.setText))
-        self._apply_share()
-
-    def _apply_share(self):
-        adv = bool(self.v_adv.get())
-        mode = self._share_mode()
-        for ex in self.e_hxs:
-            ex.setEnabled(adv and mode != "x")
-        for ey in self.e_hys:
-            ey.setEnabled(adv and mode != "y")
-        self._mirror_shared()
-
-    def _mirror_shared(self):
-        mode = self._share_mode()
-        if mode == "x":
-            for ex in self.e_hxs:
-                ex.setText(self.e_hx.text())
-        elif mode == "y":
-            for ey in self.e_hys:
-                ey.setText(self.e_hy.text())
 
     def _toggle_inv(self):
         self.e_ref.setEnabled(bool(self.v_inv.get()))
@@ -564,9 +447,11 @@ class BubbleDialog(QDialog):
                 feat = "depth %.2f" % nom
             else:
                 feat = "%.2f" % nom
-        base = {"type": t, "group": self.v_group.get(),
+        base = {"type": t,
                 "tier": self.v_tier.get(), "pin": None,
                 "offset": None, "measured": None}
+        if self.v_qty.get() > 1:
+            base["qty"] = self.v_qty.get()
         tol = self._resolve_tol(nom, raw=self.v_nom.get())
 
         dep = fnum(self.v_dep.get()) if hole else None
@@ -575,10 +460,9 @@ class BubbleDialog(QDialog):
         if cbz is not None and cbd is None:
             raise ValueError(tr('CBore depth needs CBore Ø'))
 
-        def row(grp, ft, nm, is_dia=False, typ=None, raw=None):
+        def row(ft, nm, is_dia=False, typ=None, raw=None):
             d = dict(base)
             d.update(self._tol_for_feature(nm, is_dia, raw=raw))
-            d["group"] = grp
             d["feature"] = ft
             d["nominal"] = nm
             d["pin"] = self._pin_for(nm, is_dia)
@@ -589,60 +473,17 @@ class BubbleDialog(QDialog):
         def extras(tag=""):
             out = []
             if dep is not None:
-                out.append(row("holes Ø",
-                               ("depth%s" % tag), dep,
+                out.append(row(("depth%s" % tag), dep,
                                typ="depth",
                                raw=self.v_dep.get()))
             if cbd is not None:
-                out.append(row("holes Ø",
-                               (u"cbore Ø%s" % tag), cbd, is_dia=True,
+                out.append(row((u"cbore Ø%s" % tag), cbd, is_dia=True,
                                raw=self.v_cbd.get()))
             if cbz is not None:
-                out.append(row("holes Ø",
-                               ("cbore depth%s" % tag), cbz,
+                out.append(row(("cbore depth%s" % tag), cbz,
                                typ="depth",
                                raw=self.v_cbz.get()))
             return out
-
-        if self.v_adv.get() and not self.edit:
-            hx, hy = fnum(self.v_hx.get()), fnum(self.v_hy.get())
-            if hx is None or hy is None:
-                raise ValueError(tr('Advanced hole needs X and Y'))
-            try:
-                n = max(1, int(float(self.v_pn.get().replace(",", "."))))
-            except ValueError:
-                n = 1
-            share = self._share_mode()
-            coords = [(hx, hy)]
-            for k in range(1, n):
-                vx = self.v_hxs[k - 1] if k - 1 < len(self.v_hxs) else None
-                vy = self.v_hys[k - 1] if k - 1 < len(self.v_hys) else None
-                kx = hx if share == "x" else fnum(vx.get() if vx else "")
-                ky = hy if share == "y" else fnum(vy.get() if vy else "")
-                if kx is None or ky is None:
-                    raise ValueError(tr('Hole #%d needs X and Y') % (k + 1))
-                coords.append((round(kx, 4), round(ky, 4)))
-            hole_pin = self._pin_for(nom, True)
-            rows = []
-            for k, (kx, ky) in enumerate(coords):
-                tag = (" H%d" % (k + 1)) if n > 1 else ""
-                xr = row("positions", "X pos%s" % tag, kx,
-                         typ="position")
-                yr = row("positions", "Y pos%s" % tag, ky,
-                         typ="position")
-                xr["pin"] = yr["pin"] = hole_pin
-                dia = row("holes Ø", ((feat or u"Ø") + tag), nom,
-                          is_dia=True)
-                dia["pin"] = None
-                rows.append(xr)
-                rows.append(yr)
-                rows.append(dia)
-                rows.extend(extras(tag))
-            for i, d in enumerate(rows):
-                d["bubble"] = "%s%s" % (self.bubble_no,
-                                        LETTERS[i % len(LETTERS)])
-                d["_expanded"] = True
-            return rows
 
         suffix = ""
         if self.sub_idx > 0:
@@ -678,25 +519,20 @@ class BubbleDialog(QDialog):
             return
         self.sub_idx = len(self.rows)
         for v in (self.v_feat, self.v_nom, self.v_pin, self.v_ref,
-                  self.v_hx, self.v_hy,
                   self.v_dep, self.v_cbd, self.v_cbz):
             v.set("")
-        self.v_pn.set("1")
-        self.cmb_share.setCurrentIndex(0)
-        self._build_holes()
+        self.v_qty.set(1)
         self.v_inv.set(False)
-        self.v_adv.set(False)
         for v in (self.v_tsym, self.v_tmax, self.v_tmin):
             v.set("")
         self._tsym_user = False
         self._mm_user = False
         self._toggle_inv()
-        self._toggle_adv()
         self.setWindowTitle(tr('Bubble') + " #%s%s" % (
             self.bubble_no, chr(ord("a") + self.sub_idx)))
 
     def _snapshot(self):
-        out = {"group": self.v_group.get(), "tier": self.v_tier.get()}
+        out = {"tier": self.v_tier.get()}
         raw_sym = self.v_tsym.get().strip()
         if self._tsym_sticky and raw_sym:
             out["tsym"] = raw_sym

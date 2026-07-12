@@ -87,13 +87,15 @@ class BubbleStore:
             ts = datetime.now().isoformat(timespec="minutes")
             ledger = copy.deepcopy(d.get("ledger", []))
             for r in ledger:
-                for _k in ("type", "group"):
-                    _v = r.get(_k)
-                    if isinstance(_v, str) and " / " in _v:
-                        r[_k] = _v.split(" / ", 1)[0]
+                _t = r.get("type")
+                if isinstance(_t, str) and " / " in _t:
+                    r["type"] = _t.split(" / ", 1)[0]
+                _g = r.pop("group", None)
+                if isinstance(_g, str) and " / " in _g:
+                    _g = _g.split(" / ", 1)[0]
                 if r.get("type") == "attr":
                     r["type"] = ("finish"
-                                 if str(r.get("group", "")).startswith("finish")
+                                 if str(_g or "").startswith("finish")
                                  else "GD&T")
                 if not r.get("ops") and r.get("measured") not in (None, ""):
                     r["ops"] = {"op1": {"measured": str(r["measured"]),
@@ -107,6 +109,8 @@ class BubbleStore:
         return True
 
     def save_session(self, path):
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"v": SESSION_VERSION, "ledger": self.ledger,
                        "uid_seq": self.uid_seq}, f)
+        os.replace(tmp, path)

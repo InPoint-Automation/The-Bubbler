@@ -16,7 +16,6 @@ from .scanreview import ScanReview
 from .scanlib import (scan_to_row, scan_parse, scan_normalize,
                       parse_general_tols)
 from .scanpos import page_words
-from .common import GROUP_OF
 from .config import CFG_DEFAULT
 from .i18n import tr
 
@@ -156,9 +155,7 @@ class CaptureMixin:
         rw = scan_to_row(h)
         self._apply_general_tol(rw, h, gtols)
         if h.get("sb") == "BARE":
-            t = "dim"
-            rw["type"] = t
-            rw["group"] = GROUP_OF.get(t, rw.get("group", ""))
+            rw["type"] = "dim"
             rw["tier"] = self.last.get("tier", "")
         return rw
 

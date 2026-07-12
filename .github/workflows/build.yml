@@ -1,8 +1,11 @@
 name: Build (Nuitka)
 on:
   push:
-    tags: ["v*"]
+    branches: [master]
   workflow_dispatch: {}
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     permissions:
@@ -27,12 +30,14 @@ jobs:
       BUBBLER_LOWMEM: ${{ matrix.lowmem }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            patchelf binutils clang \
+            patchelf binutils clang ccache \
             libgl1 libxrender1 libxcb-cursor0 libegl1 \
             libxkbcommon0 libdbus-1-3
       - name: Set up Python 3.12
@@ -49,7 +54,10 @@ jobs:
             ~/.cache/ccache
             ~/AppData/Local/ccache
             ~/Library/Caches/ccache
-          key: nuitka-${{ runner.os }}-${{ hashFiles('requirements-build-*.txt') }}
+          key: nuitka-${{ runner.os }}-${{ hashFiles('requirements-build-*.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ hashFiles('requirements-build-*.txt') }}-
+            nuitka-${{ runner.os }}-
       - name: Create build venv
         run: python packaging/make_build_venv.py
       - name: Build (Linux/macOS)
@@ -76,10 +84,29 @@ jobs:
             bin/Bubbler-macos.dmg
           if-no-files-found: ignore
           retention-days: 14
+      - name: Detect release tag + notes
+        id: reltag
+        shell: bash
+        run: |
+          git fetch --tags --force origin || true
+          TAG=$(git tag --points-at HEAD | grep -E '^v' | head -n1 || true)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag on HEAD: '${TAG:-<none>}'"
+          : > RELEASE_NOTES.md   # notes = version line + this version's CHANGELOG section
+          if [ -n "$TAG" ] && [ -f CHANGELOG.md ]; then
+            printf '%s\n' "$TAG" > RELEASE_NOTES.md
+            awk -v t="$TAG" '
+              $0 ~ "^### Version " t "[[:space:]]*$" {f=1; next}
+              f && /^### Version / {exit}
+              f {print}
+            ' CHANGELOG.md >> RELEASE_NOTES.md
+          fi
       - name: Attach to release
-        if: success() && startsWith(github.ref, 'refs/tags/')
+        if: success() && steps.reltag.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.reltag.outputs.tag }}
+          body_path: RELEASE_NOTES.md
           files: |
             bin/Bubbler.exe
             bin/Bubbler-x86_64.AppImage
