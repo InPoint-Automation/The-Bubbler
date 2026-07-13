@@ -11,7 +11,15 @@ Free, open source, fully offline.
 
 ## Features
 
-- TBD
+- Click a callout to balloon it - automatically fills number/nominal/tolerance/fits/etc
+- Works fully offline
+- Handles dimensions, threads, GD&T, fits, surface finish, holes, and more
+- Fills in tolerances automatically (ISO 2768, ISO 286 fits)
+- Enter measurements in the program directly, including expressions for differential measurements
+- Export inspection sheet and the ballooned PDF
+- Flag out-of-tolerance results
+- Custom trained region and symbol detector models included
+- Can also leverage a VLM (requires internet to download model from Hugging Face)
 
 ## Requirements
 
@@ -29,9 +37,11 @@ From source: see [DEV.md](DEV.md).
 
 ## Usage
 
-Open a drawing, click to place bubbles. First bubble runs OCR and can hang for a couple seconds.
-You can measure in the program or just Save which exports the ballooned PDF and `.xlsx` sheet 
-(either with measurements or you can manually do the measurements).
+Open a drawing, click to place bubbles.
+
+You can measure in the program or externally.
+
+Save exports the ballooned PDF and `.xlsx` inspection report sheet.
 
 <p align="center" width="80%">
 <img alt="Bubbler screenshot" src="./img/example.png" width="80%" />
