@@ -486,16 +486,25 @@ _SYM_CLASSES = (
 )
 
 
-def _model_path(cfg):
+def _onnx_roots():
+    """Dirs for models"""
     import os, sys
-    p = cfg.get("vision_model")
+    here = os.path.dirname(os.path.abspath(__file__))
+    roots = [here, os.path.dirname(here), os.path.dirname(os.path.dirname(here))]
+    try:
+        roots.append(__compiled__.containing_dir)   # Nuitka standalone
+    except NameError:
+        pass
+    roots.append(os.path.dirname(sys.argv[0]))
+    return roots
+
+
+def _model_path(cfg):
+    import os
+    p = (cfg or {}).get("vision_model")
     if p and os.path.exists(p):
         return p
-    roots = [os.path.dirname(os.path.abspath(__file__))]
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        roots += [os.path.join(base, "bubbler"), base]
-    for root in roots:
+    for root in _onnx_roots():
         cand = os.path.join(root, "models", "gdt_symbols.onnx")
         if os.path.exists(cand):
             return cand
@@ -758,15 +767,11 @@ _RGN_TRIED = False
 
 
 def _region_model_path(cfg):
-    import os, sys
+    import os
     p = (cfg or {}).get("vision_region_model")
     if p and os.path.exists(p):
         return p
-    roots = [os.path.dirname(os.path.abspath(__file__))]
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        roots += [os.path.join(base, "bubbler"), base]
-    for root in roots:
+    for root in _onnx_roots():
         cand = os.path.join(root, "models", "gdt_regions.onnx")
         if os.path.exists(cand):
             return cand

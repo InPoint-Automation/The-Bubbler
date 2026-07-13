@@ -35,7 +35,21 @@ _LOC = re.compile(r"<loc_(\d+)>")
 _SEG = re.compile(r"(.+?)((?:<loc_\d+>){8})", re.S)
 _SPECIAL = re.compile(r"</?s>|<pad>")
 
-_DEFAULT_PACKS = ("florence2", "florence2-base-ft")
+_DEFAULT_PACKS = ("florence2", "florence2-base-ft", "florence2-large-ft")
+
+# HuggingFace repo
+HF_REPOS = {
+    "florence2-base-ft": ("onnx-community/Florence-2-base-ft", ""),
+    "florence2-large-ft": ("onnx-community/Florence-2-large-ft", "_quantized"),
+}
+# Graphs
+_DL_GRAPHS = ("vision_encoder", "embed_tokens", "encoder_model",
+              "decoder_model_merged")
+
+
+def user_models_dir():
+    """Writable models root for on-demand downloads (~/.bubbler/models)."""
+    return os.path.join(os.path.expanduser("~"), ".bubbler", "models")
 
 
 def _model_roots(model_root=None):
@@ -52,11 +66,66 @@ def _model_roots(model_root=None):
     except NameError:
         pass
     roots.append(os.path.join(os.path.dirname(sys.argv[0]), "models"))
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        roots.append(os.path.join(base, "models"))
-        roots.append(os.path.join(base, "bubbler", "models"))
+    roots.append(user_models_dir())            # on-demand download target
     return roots
+
+
+def _pack_files(sfx):
+    """Repo-relative paths"""
+    out = ["tokenizer.json"]
+    for stem in _DL_GRAPHS:
+        out.append("onnx/%s%s.onnx" % (stem, sfx))
+    return out
+
+
+def _download_one(url, dst, progress, should_cancel):
+    import urllib.request
+    tmp = dst + ".part"
+    req = urllib.request.Request(url, headers={"User-Agent": "Bubbler"})
+    with urllib.request.urlopen(req) as r:      # follows CDN redirect
+        size = float(r.headers.get("Content-Length") or 0)
+        done = 0.0
+        with open(tmp, "wb") as f:
+            while True:
+                if should_cancel and should_cancel():
+                    raise RuntimeError("cancelled")
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, size)
+    if size and done != size:
+        os.remove(tmp)
+        raise RuntimeError("incomplete download: %s (%d/%d bytes)"
+                           % (os.path.basename(dst), int(done), int(size)))
+    os.replace(tmp, dst)                         # atomic swap
+
+
+def download_pack(pack, dest_root=None, progress=None, should_cancel=None):
+    """Fetch Florence-2 HuggingFace"""
+    spec = HF_REPOS.get(pack)
+    if spec is None:
+        raise ValueError("unknown pack: %s" % pack)
+    repo, sfx = spec
+    if dest_root is None:
+        dest_root = user_models_dir()
+    pack_dir = os.path.join(dest_root, pack)
+    files = _pack_files(sfx)
+    total = len(files)
+    for i, rel in enumerate(files):
+        if should_cancel and should_cancel():
+            raise RuntimeError("cancelled")
+        dst = os.path.join(pack_dir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        url = "https://huggingface.co/%s/resolve/main/%s" % (repo, rel)
+        _download_one(
+            url, dst,
+            (lambda cur, tot, _i=i, _n=rel: progress(_i, total, cur, tot, _n))
+            if progress else None,
+            should_cancel)
+    return pack_dir
 
 
 def model_dir(cfg, model_root=None):

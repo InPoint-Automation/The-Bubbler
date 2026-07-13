@@ -201,6 +201,13 @@ CATALOG = {
     'Unsaved': 'Niezapisane',
     'VLM engine': 'Silnik VLM',
     'VLM model': 'Model VLM',
+    'Download VLM model': 'Pobierz model VLM',
+    'Download': 'Pobierz',
+    'Downloading %s...': 'Pobieranie %s...',
+    'File %d/%d: %s (%.0f MB)': 'Plik %d/%d: %s (%.0f MB)',
+    'Downloaded to:\n%s\n\nSelect OK to save settings and use it.':
+        'Pobrano do:\n%s\n\nWybierz OK, aby zapisać ustawienia i użyć.',
+    'Download failed: %s': 'Pobieranie nie powiodło się: %s',
     'View': 'Widok',
     'Vision assist (beta)': 'Wspomaganie wizyjne:',
     'Vision confidences must be between 0 and 1': 'Pewność musi być w zakresie 0-1',

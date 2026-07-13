@@ -26,10 +26,6 @@ def _icon_dir():
     except NameError:
         pass
     candidates.append(os.path.join(os.path.dirname(sys.argv[0]), "icons_svg"))
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        candidates.append(os.path.join(base, "icons_svg"))
-        candidates.append(os.path.join(base, "bubbler", "icons_svg"))
     for p in candidates:
         if os.path.isdir(p):
             return p

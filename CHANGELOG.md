@@ -1,5 +1,10 @@
 # Changelog
 
+### Version v0.2.2
+- GD&T symbol and region detectors weren't properly loading in Windows builds
+- Fix OCR text-reader models in Windows builds
+- Add "Download VLM" in Settings -> Vision to fetch Florence-2 (base-ft or large-ft)
+
 ### Version v0.2.1
 - Add calculator input in measure field and in app calculator
 - If enter expression e.g. "25-12" in measure field, first enter calculates result for verification and 2nd saves measurement

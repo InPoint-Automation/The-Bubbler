@@ -179,7 +179,26 @@ def _pick_pdf(cfg):
     return dlg.dropped or sel["path"]
 
 
+def _selftest():
+    """fail if any pass is down."""
+    from . import vision
+    av = vision.available({})
+    need = ("geometry", "ocr", "symbols", "region")
+    for k in ("geometry", "ocr", "symbols", "region", "vlm"):
+        print("%-9s %s" % (k, "ok" if av.get(k) else "MISSING"))
+    for msg in (av.get("reasons") or {}).values():
+        print("  ! " + msg)
+    missing = [k for k in need if not av.get(k)]
+    if missing:
+        print("selftest FAILED: " + ", ".join(missing))
+        return 1
+    print("selftest OK")
+    return 0
+
+
 def main():
+    if "--selftest" in sys.argv[1:]:
+        sys.exit(_selftest())
     cfg = load_cfg()
     app = QApplication(sys.argv)
     apply_office_theme(app)

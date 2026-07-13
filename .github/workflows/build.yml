@@ -66,6 +66,15 @@ jobs:
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: .build-venv\Scripts\python packaging\build.py
+      - name: Self-test bundle (Windows)
+        if: runner.os == 'Windows'
+        run: bin\Bubbler.exe --selftest
+      - name: Self-test bundle (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a bin/Bubbler.dist/Bubbler.bin --selftest
+      - name: Self-test bundle (macOS)
+        if: runner.os == 'macOS'
+        run: bin/Bubbler.app/Contents/MacOS/Bubbler --selftest
       - name: Package AppImage (Linux)
         if: runner.os == 'Linux'
         run: .build-venv/bin/python packaging/make_appimage.py

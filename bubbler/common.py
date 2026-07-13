@@ -8,7 +8,7 @@ import re
 
 APP_NAME = "Bubbler"
 ORG = "InPoint Automation Sp. z o.o."
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 RADIUS = 9.0
 FONTSZ = 10.0

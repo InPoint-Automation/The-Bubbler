@@ -78,6 +78,25 @@ APP = {
 }
 
 
+def _rapidocr_data() -> tuple[list, list]:
+    """rapidocr dirs"""
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("rapidocr_onnxruntime")
+    except Exception:
+        spec = None
+    if not spec or not spec.origin:
+        return [], []
+    pkg = Path(spec.origin).parent
+    dirs, files = [], []
+    if (pkg / "models").is_dir():
+        dirs.append((str(pkg / "models"), "rapidocr_onnxruntime/models"))
+    if (pkg / "config.yaml").is_file():
+        files.append((str(pkg / "config.yaml"),
+                      "rapidocr_onnxruntime/config.yaml"))
+    return dirs, files
+
+
 def _win_versions() -> tuple[str, str]:
     """Pad VERSION to Nuitka's four-part X.Y.Z.W."""
     parts = (META["version"].split(".") + ["0", "0", "0", "0"])[:4]
@@ -117,6 +136,11 @@ def flags() -> list[str]:
         f.append(f"--include-data-dir={REPO / src}={dest}")
     for src, dest in APP["data_files"]:
         f.append(f"--include-data-file={REPO / src}={dest}")
+    ro_dirs, ro_files = _rapidocr_data()
+    for src, dest in ro_dirs:
+        f.append(f"--include-data-dir={src}={dest}")
+    for src, dest in ro_files:
+        f.append(f"--include-data-file={src}={dest}")
     for pat in APP["noinclude_data"]:
         f.append(f"--noinclude-data-files={pat}")
 

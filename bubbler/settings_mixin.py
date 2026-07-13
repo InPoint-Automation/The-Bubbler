@@ -5,10 +5,12 @@
 
 import os
 
+from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QComboBox,
                                QCheckBox, QPushButton, QMessageBox,
-                               QTabWidget, QScrollArea, QFileDialog)
+                               QTabWidget, QScrollArea, QFileDialog,
+                               QProgressDialog)
 
 from .common import TYPES, TIERS, SHAPES
 from .config import save_cfg, CFG_DEFAULT
@@ -17,6 +19,36 @@ from .scanlib import GAGES
 from .i18n import tr, set_lang, retranslate
 from .keyhelp import _keybinds_html
 from . import vision, florence
+
+
+class _DLSignals(QObject):
+    progress = Signal(int, int, float, float, str)
+    done = Signal(str)
+    failed = Signal(str)
+
+
+class _FlorenceDLTask(QRunnable):
+    """Florence-2 download"""
+
+    def __init__(self, pack, dest_root):
+        super().__init__()
+        self.pack, self.dest_root = pack, dest_root
+        self.signals = _DLSignals()
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            path = florence.download_pack(
+                self.pack, self.dest_root,
+                progress=lambda i, n, c, t, nm:
+                    self.signals.progress.emit(i, n, c, t, nm),
+                should_cancel=lambda: self._cancel)
+            self.signals.done.emit(path)
+        except Exception as e:
+            self.signals.failed.emit(str(e))
 
 
 class SettingsMixin:
@@ -371,6 +403,19 @@ class SettingsMixin:
         cb_vvlmmodel.setCurrentIndex(_vlmm_idx)
         g.addWidget(cb_vvlmmodel, r, 1)
         r += 1
+        g.addWidget(QLabel(tr('Download VLM model')), r, 0)
+        dlrow = QHBoxLayout()
+        cb_dlpack = QComboBox()
+        cb_dlpack.addItems(list(florence.HF_REPOS.keys()))
+        b_dl = QPushButton(tr('Download'))
+        b_dl.clicked.connect(
+            lambda: self._download_vlm(cb_dlpack.currentText(), cb_vvlmmodel))
+        dlrow.addWidget(cb_dlpack)
+        dlrow.addWidget(b_dl)
+        _dlw = QWidget()
+        _dlw.setLayout(dlrow)
+        g.addWidget(_dlw, r, 1)
+        r += 1
         c_vsyminj = QCheckBox("        inject detected symbols into VLM reads / "
                               "wstrzykuj symbole do VLM")
         c_vsyminj.setChecked(bool(self.cfg.get("vision_sym_inject_vlm", True)))
@@ -405,8 +450,8 @@ class SettingsMixin:
             g.addWidget(rhint, r, 0, 1, 2)
             r += 1
         if not vavail.get("vlm"):
-            vlmhint = QLabel("   Florence-2 VLM pack not installed; the VLM "
-                             "reader is unavailable.")
+            vlmhint = QLabel("   Florence-2 VLM pack not installed; use "
+                             "'Download VLM model' above to fetch one.")
             vlmhint.setProperty("i18n_skip", True)
             vlmhint.setStyleSheet("color:#777; font-size:8pt;")
             g.addWidget(vlmhint, r, 0, 1, 2)
@@ -703,3 +748,60 @@ class SettingsMixin:
         dlg.setMinimumWidth(min(600, cap_w))
         dlg.resize(min(640, cap_w), min(820, cap_h))
         dlg.exec()
+
+    def _download_vlm(self, pack, model_combo):
+        """Fetch a Florence-2 pack into ~/.bubbler/models with a progress bar."""
+        if getattr(self, "_vlm_dl_task", None) is not None:
+            return                               # one download at a time
+        dest = florence.user_models_dir()
+        prog = QProgressDialog(
+            tr('Downloading %s...') % pack, tr('Cancel'), 0, 100, self)
+        prog.setWindowTitle(tr('Download VLM model'))
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.setAutoClose(False)
+        prog.setAutoReset(False)
+        task = _FlorenceDLTask(pack, dest)
+        self._vlm_dl_task = task
+        self._vlm_dl_prog = prog
+        prog.canceled.connect(task.cancel)
+
+        def release():
+            prog.reset()
+            self._vlm_dl_task = None
+            self._vlm_dl_prog = None
+
+        def on_progress(i, n, cur, tot, name):
+            base = i / n * 100.0
+            step = (cur / tot * 100.0 / n) if tot else 0.0
+            prog.setValue(int(base + step))
+            short = name.rsplit('/', 1)[-1]
+            mb = cur / 1048576.0
+            prog.setLabelText(tr('File %d/%d: %s (%.0f MB)')
+                              % (i + 1, n, short, mb))
+
+        def on_done(path):
+            release()
+            if model_combo.findData(pack) < 0:
+                model_combo.addItem(pack, pack)
+            model_combo.setCurrentIndex(model_combo.findData(pack))
+            try:
+                vision.clear_cache()
+            except Exception:
+                pass
+            QMessageBox.information(
+                self, tr('Download VLM model'),
+                tr('Downloaded to:\n%s\n\nSelect OK to save settings and use it.')
+                % path)
+
+        def on_failed(msg):
+            release()
+            if 'cancelled' in msg.lower():
+                return
+            QMessageBox.warning(self, tr('Download VLM model'),
+                                tr('Download failed: %s') % msg)
+
+        task.signals.progress.connect(on_progress)
+        task.signals.done.connect(on_done)
+        task.signals.failed.connect(on_failed)
+        QThreadPool.globalInstance().start(task)
