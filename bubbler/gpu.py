@@ -66,11 +66,10 @@ def worker_script():
     cands = [os.path.join(here, "gpu_worker.py")]
     try:
         cands.append(os.path.join(__compiled__.containing_dir,
-                                  "bubbler", "gpu_worker.py"))
+                                  "gpu_worker.py"))
     except NameError:
         pass
-    cands.append(os.path.join(os.path.dirname(sys.argv[0]),
-                              "bubbler", "gpu_worker.py"))
+    cands.append(os.path.join(os.path.dirname(sys.argv[0]), "gpu_worker.py"))
     for c in cands:
         if os.path.exists(c):
             return c

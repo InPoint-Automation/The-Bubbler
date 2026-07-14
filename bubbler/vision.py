@@ -1153,7 +1153,11 @@ def read_rect_words(page, cfg, rect, use_vlm=False):
     if use_vlm and cfg.get("vision_vlm"):
         eng = _vlm_engine(cfg)
         if eng is not None:
-            words = _vlm_read_block(img, s, rect, eng, _VBLOCK + 9000)
+            try:
+                words = _vlm_read_block(img, s, rect, eng, _VBLOCK + 9000)
+            except Exception as e:
+                _note("vlm", "vlm read failed (%s); using OCR" % e)
+                words = None
     if not words:
         kind, eng = _ocr_engine_for(cfg)
         if eng is None:

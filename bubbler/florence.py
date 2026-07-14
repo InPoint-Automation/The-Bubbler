@@ -343,6 +343,8 @@ class Florence2:
             feed = {}
             if "input_ids" in in_names:
                 feed["input_ids"] = dec_ids
+            if "inputs_embeds" in in_names:
+                feed["inputs_embeds"] = self._embed(dec_ids)
             if "encoder_hidden_states" in in_names:
                 feed["encoder_hidden_states"] = enc_hidden
             if "encoder_attention_mask" in in_names:

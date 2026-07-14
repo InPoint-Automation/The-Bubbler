@@ -1,5 +1,9 @@
 # Changelog
 
+### Version v0.2.4
+- Fix Florence not working on drag callouts
+- Fix MacOS build issue
+
 ### Version v0.2.3
 - Fix GD&T symbol/region detectors class counts
 - Better hole and FCF callout grouping
