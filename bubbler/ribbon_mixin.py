@@ -184,7 +184,36 @@ class RibbonMixin:
             self._field("", self.chk_lead),
             self._field("radius", self.sp_rad),
             self._field("font", self.sp_fsz)]))
+        if self.cfg.get("vision_debug_overlay"):
+            tb.addSeparator()
+            tb.addWidget(self._debug_ribbon_group())
         self._apply_mode()
+
+    def _debug_ribbon_group(self):
+        """debug overlay control"""
+        from PySide6.QtWidgets import QToolButton, QMenu
+        self.btn_overlay = icon_button("search", self.toggle_debug_overlay,
+                                       "Draw detector boxes over the page",
+                                       "Overlay", toggle=True)
+        self.btn_overlay.setChecked(bool(self.cfg.get("vision_debug_on")))
+        lbtn = QToolButton()
+        lbtn.setText(tr('Layers'))
+        lbtn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        lbtn.setAutoRaise(True)
+        lbtn.setFocusPolicy(Qt.NoFocus)
+        lbtn.setPopupMode(QToolButton.InstantPopup)
+        m = QMenu(lbtn)
+        cur = set(self.cfg.get("vision_debug_layers") or [])
+        for key, label in (("sections", tr('Callout sections')),
+                           ("regions", tr('Detector blocks')),
+                           ("symbols", tr('GD&T symbols'))):
+            act = m.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(key in cur)
+            act.toggled.connect(
+                lambda on, k=key: self._toggle_debug_layer(k, on))
+        lbtn.setMenu(m)
+        return self._rib_group(tr('Debug'), [self.btn_overlay, lbtn])
 
     def _apply_mode(self):
         simple = is_simple(self.cfg)

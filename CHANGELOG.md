@@ -1,5 +1,19 @@
 # Changelog
 
+### Version v0.2.3
+- Fix GD&T symbol/region detectors class counts
+- Better hole and FCF callout grouping
+- Drag a box over a callout to re-analyze, uses OCR/VLM directly
+- Bubbles sit closer to the callouts by default
+- Reduce chances of leaders overlapping text
+- Debug overlay
+- Fix inch/ASME drawings getting ISO tolerances
+- ISO 2768-1 radius/chamfer general-tolerance table
+- Fix THRU applying to unrelated diameters
+- Deleting a bubble now updates the inspection-sheet numbers immediately
+- Exported-PDF better matches on-screen preview
+- Linux/macOS builds ship CPU onnxruntime - to use GPU on Linux needs system CUDA 12.x + cuDNN 9.x (to reduce appimage size)
+
 ### Version v0.2.2
 - GD&T symbol and region detectors weren't properly loading in Windows builds
 - Fix OCR text-reader models in Windows builds

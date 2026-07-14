@@ -8,7 +8,7 @@ import re
 
 APP_NAME = "Bubbler"
 ORG = "InPoint Automation Sp. z o.o."
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 
 RADIUS = 9.0
 FONTSZ = 10.0
@@ -246,9 +246,10 @@ def band_center(d):
 
 def _as_float(s):
     try:
-        return float(str(s).replace(",", "."))
+        v = float(str(s).replace(",", "."))
     except (TypeError, ValueError):
         return None
+    return v if math.isfinite(v) else None
 
 
 def worst_reading(values, d):

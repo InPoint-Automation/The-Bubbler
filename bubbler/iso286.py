@@ -167,5 +167,8 @@ def fit_limits(D, code):
 
 
 def is_fit_code(s):
-    """True if s is a supported ISO 286 class."""
-    return bool(_FITCODE.match(str(s or "").strip()))
+    """True if s is a fit class we can resolve"""
+    s = str(s or "").strip()
+    if not _FITCODE.match(s):
+        return False
+    return any(fit_limits(d, s) is not None for d in (3.0, 25.0, 200.0))

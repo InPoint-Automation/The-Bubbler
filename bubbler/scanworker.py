@@ -108,16 +108,32 @@ def _words_text(words):
     return "\n".join(" ".join(l) for l in lines)
 
 
-def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits):
+def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
+                   force_read=None):
     vcache = {}
-    words = _aug_words(doc, page_i, cfg, vcache)
-    sel = _words_in_rect(words, *sel_rect)
+    words = None
+    sel = None
+    forced = False
+    if force_read:
+        try:
+            sel = vision.read_rect_words(doc[page_i], cfg, sel_rect,
+                                         use_vlm=(force_read == "vlm"))
+        except Exception as e:
+            print("bubbler: forced capture read failed (%s)" % e,
+                  file=sys.stderr)
+            sel = None
+        forced = bool(sel)
+        if not forced:
+            sel = None
+    if sel is None:
+        words = _aug_words(doc, page_i, cfg, vcache)
+        sel = _words_in_rect(words, *sel_rect)
     text = _words_text(sel)
     out = {"vwords": vcache, "sel": sel, "text": text,
-           "meta": None, "hits": None}
+           "meta": None, "hits": None, "forced": forced}
     if not sel:
         return out
-    if want_meta:
+    if want_meta and not forced:
         try:
             out["meta"] = vision.meta_region_at(doc[page_i], cfg, rect)
         except Exception:
@@ -125,6 +141,9 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits):
         if out["meta"]:
             return out
     if want_hits:
+        if forced:
+            out["hits"] = scan_words(sel, include_bare=True, cfg=cfg)
+            return out
         hits = None
         try:
             hits = vision.extract_hits(doc[page_i], cfg, rect=rect,
@@ -199,7 +218,7 @@ class _CaptureSignals(QObject):
 class CaptureTask(QRunnable):
 
     def __init__(self, pdf_path, cfg, page_i, rect, sel_rect, want_meta,
-                 want_hits):
+                 want_hits, force_read=None):
         super().__init__()
         self.pdf_path = pdf_path
         self.cfg = cfg
@@ -208,6 +227,7 @@ class CaptureTask(QRunnable):
         self.sel_rect = sel_rect
         self.want_meta = want_meta
         self.want_hits = want_hits
+        self.force_read = force_read
         self.signals = _CaptureSignals()
 
     def run(self):
@@ -216,7 +236,7 @@ class CaptureTask(QRunnable):
             doc = fitz.open(self.pdf_path)
             result = capture_region(doc, self.cfg, self.page_i, self.rect,
                                     self.sel_rect, self.want_meta,
-                                    self.want_hits)
+                                    self.want_hits, force_read=self.force_read)
             self.signals.done.emit(result)
         except Exception as e:
             self.signals.failed.emit(str(e))

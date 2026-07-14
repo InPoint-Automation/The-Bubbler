@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
 
 from .common import (APP_NAME, RADIUS, FONTSZ, RED, LEADER_EXITS,
                      TYPES, TIERS,
-                     base_of, qc_path,
+                     base_of, qc_path, dp_tol,
                      tier_rgb, tier_shape, bubble_shape_points, tier_for_type,
                      measure_state)
 from .config import load_cfg, save_cfg, units_of
@@ -370,6 +370,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     def _style_set(self, key, val):
         lo, hi = (3, 40) if key == "radius" else (4, 30)
         self.cfg[key] = max(lo, min(hi, float(val)))
+        if key == "radius":
+            self.__dict__.pop("_leadtrim_cache", None)   # trim depends on r
         save_cfg(self.cfg)
         self.render()
 
@@ -608,12 +610,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             d = dp_of_value(h.get("v"))
             if d is not None:
                 t = (gtols or {}).get(min(d, 4))
-                if t is None and self.cfg.get("dp_on"):
-                    try:
-                        t = float((self.cfg.get("dp_tols") or {})
-                                  .get(str(min(d, 3))) or 0) or None
-                    except (TypeError, ValueError):
-                        t = None
+                if t is None:
+                    t = dp_tol(h.get("v"), self.cfg)
         if t:
             rw["tol_sym"] = float(t)
         return rw
@@ -787,7 +785,9 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             col = QColor.fromRgbF(*tier_rgb(row.get("tier")))
             shape = tier_shape(row.get("tier"), self.cfg)
             if (bx, by) != (ax, ay) and self._leader_of(num):
-                ahx, ahy = scr(ax, ay)
+                tx, ty = ((self._leader_target(self.page_i, bx, by, ax, ay))
+                          if self.cfg.get("leader_trim", True) else (ax, ay))
+                ahx, ahy = scr(tx, ty)
                 ex = LEXIT.get(self._lexit_of(num))
                 if ex is not None:
                     sx0, sy0 = cx + ex[0] * rad, cy + ex[1] * rad
@@ -882,6 +882,112 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                     region_box(self._scan_drag,
                                green if self._scan_region_mode == "include"
                                else red)
+        if self.cfg.get("vision_debug_on"):
+            self._paint_debug(painter, scr)
+
+    def _page_sections(self):
+        """Cached callout sections for this page (debug)."""
+        key = (id(self.doc), self.page_i)
+        cache = self.__dict__.get("_sec_cache")
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        from bubbler import scanpos
+        try:
+            secs = scanpos.page_sections(self.doc[self.page_i], self.cfg)
+        except Exception:
+            secs = []
+        self._sec_cache = (key, secs)
+        return secs
+
+    def toggle_debug_overlay(self):
+        self.cfg["vision_debug_on"] = not self.cfg.get("vision_debug_on")
+        save_cfg(self.cfg)
+        self.redraw_overlay()
+
+    _DBG_LAYER_ORDER = ("sections", "regions", "symbols")
+
+    def _toggle_debug_layer(self, key, on):
+        layers = set(self.cfg.get("vision_debug_layers") or [])
+        layers.add(key) if on else layers.discard(key)
+        self.cfg["vision_debug_layers"] = [k for k in self._DBG_LAYER_ORDER
+                                           if k in layers]
+        save_cfg(self.cfg)
+        self.redraw_overlay()
+
+    def _paint_debug(self, painter, scr):
+        layers = self.cfg.get("vision_debug_layers") or []
+        if "sections" in layers:
+            self._paint_sections(painter, scr)
+        if "regions" in layers:
+            self._paint_regions(painter, scr)
+        if "symbols" in layers:
+            self._paint_symbols(painter, scr)
+
+    def _paint_box(self, painter, scr, rect, col, label=None, dashed=True):
+        p0, p1 = scr(rect[0], rect[1]), scr(rect[2], rect[3])
+        painter.setPen(QPen(col, 1, Qt.DashLine if dashed else Qt.SolidLine))
+        painter.setBrush(QBrush(QColor(col.red(), col.green(), col.blue(), 28)))
+        painter.drawRect(QRectF(p0[0], p0[1], p1[0] - p0[0], p1[1] - p0[1]))
+        if label:
+            painter.setPen(QPen(col, 1))
+            painter.drawText(QPointF(p0[0] + 2, p0[1] - 2), label)
+        return p0, p1
+
+    def _paint_sections(self, painter, scr):
+        multi = QColor(170, 40, 200)          # merged stack
+        single = QColor(150, 150, 150)         # lone line
+        for s in self._page_sections():
+            col = multi if s["n"] > 1 else single
+            self._paint_box(painter, scr, s["rect"], col,
+                            "%dx" % s["n"] if s["n"] > 1 else None)
+
+    def _paint_regions(self, painter, scr):
+        col = QColor(30, 110, 230)
+        for x0, y0, x1, y1, label in self._page_regions():
+            self._paint_box(painter, scr, (x0, y0, x1, y1), col, label,
+                            dashed=False)
+
+    def _paint_symbols(self, painter, scr):
+        col = QColor(216, 120, 20)
+        for x0, y0, x1, y1, tok in self._page_symbols():
+            self._paint_box(painter, scr, (x0, y0, x1, y1), col, tok,
+                            dashed=False)
+
+    def _page_regions(self):
+        """Cached detector-block boxes for this page (debug)."""
+        key = (id(self.doc), self.page_i)
+        c = self.__dict__.get("_rgn_dbg_cache")
+        if c is not None and c[0] == key:
+            return c[1]
+        from . import vision
+        out = []
+        try:
+            for b in vision._region_boxes(self.doc[self.page_i], self.cfg):
+                ci = int(b[5]) if len(b) > 5 else -1
+                cls = (vision._REGION_CLASSES[ci]
+                       if 0 <= ci < len(vision._REGION_CLASSES) else "?")
+                out.append((b[0], b[1], b[2], b[3],
+                            "%s %.0f%%" % (cls, float(b[4]) * 100)))
+        except Exception:
+            out = []
+        self._rgn_dbg_cache = (key, out)
+        return out
+
+    def _page_symbols(self):
+        """Cached GD&T symbol-detector boxes for this page (debug)."""
+        key = (id(self.doc), self.page_i)
+        c = self.__dict__.get("_sym_dbg_cache")
+        if c is not None and c[0] == key:
+            return c[1]
+        from . import vision
+        out = []
+        try:
+            for env, tok in vision._symbol_dets(self.doc[self.page_i], self.cfg):
+                out.append((env[0], env[1], env[2], env[3], str(tok).strip()))
+        except Exception:
+            out = []
+        self._sym_dbg_cache = (key, out)
+        return out
 
     def flip(self, d):
         self.goto_page(self.page_i + d)
@@ -1004,6 +1110,11 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             m.addAction(tr('Report misread...'),
                         lambda d=d0: self.report_misread(d))
         m.addSeparator()
+        if len(rows) > 1:
+            m.addAction(tr('Split into separate bubbles'),
+                        lambda: self.split_bubble(hit))
+            # merge
+        m.addSeparator()
         m.addAction(tr('Delete bubble'),
                     lambda: self._delete_bases([hit]))
         m.exec(gpos.toPoint())
@@ -1058,6 +1169,27 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._save_session()
         self.refresh_panel()
         self.render()
+
+    def split_bubble(self, base):
+        """Explode a multi-row callout"""
+        rows = [(i, d) for i, d in enumerate(self.ledger)
+                if base_of(d["bubble"]) == base]
+        if len(rows) < 2:
+            self.set_status(tr('nothing to split'))
+            return
+        self.snapshot()
+        step = float(self.cfg.get("radius", 14)) * 2.2
+        for n, (i, d) in enumerate(rows[1:], start=1):
+            d["uid"] = self.store.new_uid()
+            d["x"] = d["x"] + step * n
+            d["y"] = d["y"] + step * n
+            d["bx"] = d.get("bx", d["x"]) + step * n
+            d["by"] = d.get("by", d["y"]) + step * n
+        self.store.renumber()
+        self._save_session()
+        self.refresh_panel()
+        self.render()
+        self.set_status(tr('split into %d bubbles') % len(rows))
 
     def _sel_first_rows(self):
         out = []
@@ -1207,10 +1339,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.addDockWidget(Qt.BottomDockWidgetArea, self._mbar_dock)
         self._mbar_dock.hide()
 
-    def _balloon_from_rows(self, rows, x, y, rect=None):
-        if not rows:
-            return
-        self.snapshot()
+    def _append_callout(self, rows, x, y, rect=None):
+        """Append rows as one callout"""
         bx, by = ((self.auto_offset(x, y, rect=rect))
                   if (self.use_leaders() or rect is not None)
                   else (x, y))
@@ -1228,8 +1358,51 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                            "bx": bx, "by": by, "sheet_row": None})
                 self.ledger.append(rr)
                 n += 1
+        return n
+
+    def _balloon_from_rows(self, rows, x, y, rect=None):
+        if not rows:
+            return
+        self.snapshot()
+        n = self._append_callout(rows, x, y, rect=rect)
         self.store.renumber()
         self._save_session()
         self.refresh_panel()
         self.render()
         self.set_status(tr('ballooned %d rows') % n)
+
+    def _bubbles_in_rect(self, rect, page_i=None):
+        """bubbles in the area"""
+        x0, y0, x1, y1 = rect
+        out = []
+        for num, ax, ay, _bx, _by in self.page_bubbles(page_i):
+            if x0 <= ax <= x1 and y0 <= ay <= y1:
+                out.append(num)
+        return out
+
+    def _regroup_capture(self, bases, rows, x, y, rect=None):
+        """Drop bubbles in the box"""
+        if not rows:
+            return
+        self.snapshot()
+        uids = set()
+        for d in self.ledger:
+            if base_of(d["bubble"]) in bases:
+                uids.add(d["uid"])
+                if d.get("sheet_row"):
+                    self.writer.clear_row(d["sheet_row"])
+        try:
+            self.writer.save()
+        except Exception:
+            pass
+        for u in uids:
+            self.store.remove(u)
+            self.sel.discard(u)
+        self._append_callout(rows, x, y, rect=rect)
+        self.store.renumber()
+        self._resync_sheet_rows()
+        self._save_session()
+        self.refresh_panel()
+        self.render()
+        self.set_status(tr('regrouped %d into one callout (Ctrl+Z to undo)')
+                        % len(bases))

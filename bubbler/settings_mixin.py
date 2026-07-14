@@ -18,7 +18,7 @@ from .sheet import HEADER_FIELDS
 from .scanlib import GAGES
 from .i18n import tr, set_lang, retranslate
 from .keyhelp import _keybinds_html
-from . import vision, florence
+from . import vision, florence, gpu
 
 
 class _DLSignals(QObject):
@@ -360,6 +360,57 @@ class SettingsMixin:
             self.cfg.get("vision_region_conf", CFG_DEFAULT["vision_region_conf"])))
         g.addWidget(e_vrgnconf, r, 1)
         r += 1
+        c_vsecgrp = QCheckBox("        grow stacked callouts to full stack / "
+                              "Rozszerz zgrupowane wywolania")
+        c_vsecgrp.setChecked(bool(self.cfg.get("vision_section_group", True)))
+        g.addWidget(c_vsecgrp, r, 0, 1, 2)
+        r += 1
+        c_vsecdbg = QCheckBox("        detector debug overlay (adds a ribbon "
+                              "Debug button) / Nakladka debugowa detektorow")
+        c_vsecdbg.setChecked(bool(self.cfg.get("vision_debug_overlay", False)))
+        c_vsecdbg.setToolTip(
+            "Adds a ribbon Debug group: Overlay toggle plus a Layers menu to "
+            "draw sections, detector blocks, and symbol boxes over the page.")
+        g.addWidget(c_vsecdbg, r, 0, 1, 2)
+        r += 1
+        c_vdragocr = QCheckBox("   • Drag-box capture reads pixels (OCR/VLM), "
+                               "not text layer / Przeciagniecie czyta piksele")
+        c_vdragocr.setChecked(bool(self.cfg.get("capture_drag_ocr", True)))
+        c_vdragocr.setToolTip(
+            "On: box drags re-read pixels with OCR/VLM, ignoring the text "
+            "layer. Avoids buried or oversized text. Off: use the text layer.")
+        g.addWidget(c_vdragocr, r, 0, 1, 2)
+        r += 1
+        c_vgpu = None
+        if gpu.is_linux():
+            gttl = QLabel(tr('GPU acceleration (Linux)'))
+            gttl.setStyleSheet("font-weight:bold;")
+            g.addWidget(gttl, r, 0, 1, 2)
+            r += 1
+            c_vgpu = QCheckBox("   • Use the GPU pack when installed / "
+                               "Uzyj pakietu GPU gdy zainstalowany")
+            c_vgpu.setChecked(bool(self.cfg.get("vision_gpu", True)))
+            c_vgpu.setToolTip("On by default. Once the pack is installed, "
+                              "detectors run on GPU. Untick to force CPU.")
+            g.addWidget(c_vgpu, r, 0, 1, 2)
+            r += 1
+            self._gpu_stat = QLabel("   " + gpu.status())
+            self._gpu_stat.setProperty("i18n_skip", True)
+            self._gpu_stat.setStyleSheet("color:#777; font-size:8pt;")
+            g.addWidget(self._gpu_stat, r, 0, 1, 2)
+            r += 1
+            b_gpu = QPushButton(tr('Install / update GPU pack...'))
+            b_gpu.clicked.connect(lambda: self._install_gpu_pack())
+            g.addWidget(b_gpu, r, 0, 1, 2)
+            r += 1
+            ghint = QLabel("   Needs an NVIDIA GPU, driver >= 525, and system "
+                           "python3. Uses your CUDA, else downloads it (~1.4 "
+                           "GB). Detectors only; OCR/VLM stay CPU.")
+            ghint.setProperty("i18n_skip", True)
+            ghint.setWordWrap(True)
+            ghint.setStyleSheet("color:#777; font-size:8pt;")
+            g.addWidget(ghint, r, 0, 1, 2)
+            r += 1
         g.addWidget(QLabel(tr('GPU')), r, 0)
         cb_vep = QComboBox()
         cb_vep.addItems(["auto", "cpu", "directml", "cuda"])
@@ -625,6 +676,7 @@ class SettingsMixin:
                 self._geom_cache = {}
                 if hasattr(self, "_obs_cache"):
                     self._obs_cache = {}
+                self.__dict__.pop("_leadtrim_cache", None)
             self.cfg["obstacle_min_w"] = obsw
             try:
                 caprad = float(e_caprad.text().replace(",", "."))
@@ -655,7 +707,10 @@ class SettingsMixin:
                       "vision_region", "vision_region_conf", "vision_ep",
                       "vision_ocr_engine", "vision_vlm", "vision_vlm_always",
                       "vision_vlm_engine", "vision_vlm_model",
-                      "vision_sym_inject_vlm", "vision_sym_inject_text")
+                      "vision_sym_inject_vlm", "vision_sym_inject_text",
+                      "vision_section_group", "vision_gpu")
+            _gpu_on = (bool(c_vgpu.isChecked()) if c_vgpu is not None
+                       else bool(self.cfg.get("vision_gpu", False)))
             _vnew = (bool(c_vision.isChecked()), bool(c_vocr.isChecked()),
                      bool(c_vocr_all.isChecked()), vocrc,
                      bool(c_vsym.isChecked()), vsymc,
@@ -664,7 +719,8 @@ class SettingsMixin:
                      bool(c_vvlm.isChecked()), bool(c_vvlm_all.isChecked()),
                      cb_vvlmeng.currentText(), cb_vvlmmodel.currentData(),
                      bool(c_vsyminj.isChecked()),
-                     bool(c_vsyminj_t.isChecked()))
+                     bool(c_vsyminj_t.isChecked()),
+                     bool(c_vsecgrp.isChecked()), _gpu_on)
             if _vnew != tuple(self.cfg.get(k) for k in _vkeys):
                 self.__dict__.pop("_vword_cache", None)
                 vision.reset_sessions()
@@ -684,6 +740,12 @@ class SettingsMixin:
             self.cfg["vision_vlm_model"] = _vnew[13]
             self.cfg["vision_sym_inject_vlm"] = _vnew[14]
             self.cfg["vision_sym_inject_text"] = _vnew[15]
+            self.cfg["vision_section_group"] = _vnew[16]
+            self.cfg["vision_gpu"] = _vnew[17]
+            self.cfg["vision_debug_overlay"] = bool(c_vsecdbg.isChecked())
+            if not self.cfg["vision_debug_overlay"]:
+                self.cfg["vision_debug_on"] = False
+            self.cfg["capture_drag_ocr"] = bool(c_vdragocr.isChecked())
             self.cfg["collect_corrections"] = bool(c_corr.isChecked())
             self.cfg["corrections_dir"] = e_corrdir.text().strip()
             _newmodel = e_vmodel.text().strip()
@@ -715,17 +777,22 @@ class SettingsMixin:
             self.cfg["sheet_lang"] = cb_sheet.currentData()
             self.writer.sheet_lang = self.cfg["sheet_lang"]
             save_cfg(self.cfg)
-            try:
-                from . import vision
-                vision.clear_cache()
-            except Exception:
-                pass
-            self._apply_ui_scale(rebuild=True)
-            self._apply_mode()
-            retranslate(self)
             dlg.accept()
-            self.render()
-            self.set_status(tr('settings saved'))
+            try:
+                vision.clear_cache()
+                self._apply_ui_scale(rebuild=True)
+                self._apply_mode()
+                retranslate(self)
+                self.render()
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QMessageBox.warning(
+                    self, tr('Error'),
+                    tr('Settings saved, but applying them failed: %s') % e)
+                self.set_status(tr('settings saved (apply failed)'))
+            else:
+                self.set_status(tr('settings saved'))
 
         bw = QWidget()
         bl = QHBoxLayout(bw)
@@ -748,6 +815,52 @@ class SettingsMixin:
         dlg.setMinimumWidth(min(600, cap_w))
         dlg.resize(min(640, cap_w), min(820, cap_h))
         dlg.exec()
+
+    def _install_gpu_pack(self):
+        """Build the GPU venv off-thread"""
+        from PySide6.QtCore import QObject, Signal
+        want_cuda = not gpu.has_system_cuda()
+        prog = QProgressDialog(
+            tr('Installing GPU pack (downloads, can take a while)...'),
+            None, 0, 0, self)
+        prog.setWindowTitle(tr('GPU pack'))
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.setCancelButton(None)
+
+        class _Sig(QObject):
+            line = Signal(str)
+            done = Signal(bool, str)
+        sig = _Sig()
+        sig.line.connect(lambda s: prog.setLabelText(s[-140:]))
+
+        def _finish(ok, msg):
+            prog.close()
+            try:
+                self._gpu_stat.setText("   " + gpu.status())
+            except (RuntimeError, AttributeError):
+                pass
+            if ok:
+                vision.reset_sessions()
+                QMessageBox.information(
+                    self, tr('GPU pack'),
+                    tr('GPU pack installed. Detectors run on GPU now, CPU if '
+                       'driver too old.'))
+            else:
+                QMessageBox.warning(self, tr('GPU pack'),
+                                    tr('GPU pack install failed: %s') % msg)
+        sig.done.connect(_finish)
+
+        def _work():
+            try:
+                ok, msg = gpu.install(want_cuda_wheels=want_cuda,
+                                      on_line=lambda ln: sig.line.emit(ln))
+            except Exception as e:
+                ok, msg = False, str(e)
+            sig.done.emit(ok, msg)
+        import threading
+        threading.Thread(target=_work, daemon=True).start()
+        prog.exec()
 
     def _download_vlm(self, pack, model_combo):
         """Fetch a Florence-2 pack into ~/.bubbler/models with a progress bar."""

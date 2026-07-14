@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMenu, QInputDialog, QMessageBox
 from .common import base_of, fnum, dp_tol, tier_for_type
 from .config import save_cfg, units_of
 from .iso286 import fit_limits, is_fit_code
-from .iso2768 import iso2768_tol
+from .iso2768 import iso2768_general_tol
 from .scanlib import expand_hole_row, scan_parse, scan_normalize
 from .dialogs import BubbleDialog
 from .i18n import tr
@@ -151,7 +151,8 @@ class BubbleMixin:
                                      "Bad tolerance: %s" % raw_sym)
                 return
         elif metric and self.last.get("iso_on"):
-            t2 = iso2768_tol(nom, self.last.get("icls", "m"))
+            t2 = iso2768_general_tol(nom, self.last.get("icls", "m"),
+                                     feature=d.get("feature"))
             if t2 is None:
                 t2 = dp_tol(dp_src, self.cfg)
             if t2 is not None:
@@ -240,13 +241,10 @@ class BubbleMixin:
                 uids.add(d["uid"])
                 if d.get("sheet_row"):
                     self.writer.clear_row(d["sheet_row"])
-        try:
-            self.writer.save()
-        except Exception:
-            pass
         for u in uids:
             self.store.remove(u)
             self.sel.discard(u)
+        self._resync_sheet_rows()
         self._qbar_refresh()
         self._save_session()
         self.refresh_panel()

@@ -3,6 +3,8 @@
 #
 # ISO 2768-1 & -2 general tolerances.
 
+import re as _re
+
 ISO2768 = {
     "f": [(3, 0.05), (6, 0.05), (30, 0.1), (120, 0.15), (400, 0.2),
           (1000, 0.3), (2000, 0.5), (4000, None)],
@@ -73,6 +75,16 @@ def iso2768_tol(nominal, cls):
 
 def iso2768_radius_tol(nominal, cls):
     return _band(ISO2768_RADIUS.get(cls, []), nominal)
+
+
+_RADIUS_FEAT = _re.compile(r"^\s*R\s?\d", _re.I)
+
+
+def iso2768_general_tol(nominal, cls, feature=None):
+    """General tolerance by nominal"""
+    if feature is not None and _RADIUS_FEAT.match(str(feature)):
+        return iso2768_radius_tol(nominal, cls)
+    return iso2768_tol(nominal, cls)
 
 
 def iso2768_angle_tol(shorter_side_mm, cls):

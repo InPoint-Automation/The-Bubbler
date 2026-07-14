@@ -23,7 +23,7 @@ REQ_FILE = {
 }
 
 EP_WHEEL = {
-    "Linux": "onnxruntime-gpu",
+    "Linux": "onnxruntime",
     "Windows": "onnxruntime-directml",
     "Darwin": "onnxruntime",
 }

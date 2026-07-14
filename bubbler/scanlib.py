@@ -350,6 +350,7 @@ def scan_parse(text, cfg=None):
     out = []
     seen = set()
     spans = []
+    at = []
     for tp, sb, pat, ex in SCAN_PATS:
         if not mode_admits_tp(tp, cfg):
             continue
@@ -368,11 +369,19 @@ def scan_parse(text, cfg=None):
                 continue
             seen.add(key)
             spans.append((s, e))
+            at.append((s, e))
             out.append({"tp": tp, "sb": sb, "v": v, "t": t,
                         "raw": m.group(0).strip()})
-    if _re.search(r"\bTHRU\b", text, _re.I):
-        for h in out:
-            if h["tp"] == "DIAMETER" and h["sb"] is None:
+    # THRU flags only a diameter on the SAME line
+    thru = [mt.start() for mt in _re.finditer(r"\bTHRU\b", text, _re.I)]
+    if thru:
+        for h, (s, e) in zip(out, at):
+            if h["tp"] != "DIAMETER" or h["sb"] is not None:
+                continue
+            ls = text.rfind("\n", 0, s) + 1
+            le = text.find("\n", e)
+            le = len(text) if le < 0 else le
+            if any(ls <= ts < le for ts in thru):
                 h["thru"] = True
     return out
 
@@ -473,9 +482,9 @@ _REPEAT_RE = _re.compile(r"^\s*(\d+)\s*[Xx×](?=\s|Ø|$)")
 
 
 def repeat_count(feature):
-    """Leading N× repeat count, clamped to 1..26."""
+    """Leading N× repeat count."""
     m = _REPEAT_RE.match(str(feature or ""))
-    return max(1, min(26, int(m.group(1)))) if m else 1
+    return max(1, min(999, int(m.group(1)))) if m else 1
 
 
 def strip_repeat(feature):

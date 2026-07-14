@@ -3,7 +3,7 @@
 #
 # Pointer input mixin. Zoom, drag, selection.
 
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt
 
 from .common import base_of
 from .i18n import tr
@@ -26,14 +26,11 @@ class InputMixin:
         self.render()
         if page is not None:
             target = self._scr(page[0], page[1])
-            vp_pos = e.position()
-            new_center_view = QPointF(self.view.viewport().width() / 2.0,
-                                      self.view.viewport().height() / 2.0)
-            delta = self.view.mapFromScene(target) - vp_pos.toPoint()
-            h = self.view.horizontalScrollBar()
-            v = self.view.verticalScrollBar()
-            h.setValue(h.value() + delta.x())
-            v.setValue(v.value() + delta.y())
+            delta = self.view.mapFromScene(target) - e.position().toPoint()
+            self.view.horizontalScrollBar().setValue(
+                self.view.horizontalScrollBar().value() + delta.x())
+            self.view.verticalScrollBar().setValue(
+                self.view.verticalScrollBar().value() + delta.y())
 
     def on_press(self, sp, vpos, predict=True):
         if self._scan_region_mode or getattr(self, "_correct_mode", None):

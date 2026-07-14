@@ -25,7 +25,7 @@ def _key_groups():
             ("Middle", tr('Pan')),
         ]),
         (tr('Keys'), [
-            ("Ctrl+Z", tr('Undo / redo')),
+            ("Ctrl+Z", tr('Undo or redo')),
             ("Ctrl+S", tr('Save')),
             ("Home", tr('Fit')),
             ("PgUp", tr('Page')),
@@ -51,7 +51,7 @@ def _key_groups():
         ]),
         (tr('Hotbar - Select tool'), [
             ("A", tr('Add tool')),
-            ("R", tr('Align row / column')),
+            ("R", tr('Align row or column')),
             ("H", tr('Distribute H')),
             ("Del", tr('Delete')),
             ("Esc", tr('Clear selection')),

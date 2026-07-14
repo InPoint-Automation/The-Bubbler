@@ -15,7 +15,7 @@ from .common import TYPES, dp_tol, tier_for_type
 from .config import units_of
 from .scanlib import (scan_to_row, expand_hole_row, denorm_candidates,
                       GAGES, repeat_count)
-from .iso2768 import iso2768_tol
+from .iso2768 import iso2768_general_tol
 from .i18n import tr, retranslate
 
 
@@ -383,7 +383,9 @@ class ScanReview(QDialog):
                     base.get("tol_max") is None and
                     base.get("tol_min") is None and
                     base.get("nominal") is not None):
-                t2768 = iso2768_tol(base["nominal"], app.last.get("icls", "m"))
+                t2768 = iso2768_general_tol(base["nominal"],
+                                            app.last.get("icls", "m"),
+                                            feature=base.get("feature"))
                 if t2768 is None:
                     t2768 = dp_tol(base["nominal"], app.cfg)
                 if t2768 is not None:

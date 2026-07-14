@@ -115,8 +115,54 @@ def _providers(cfg):
     return out or ["CPUExecutionProvider"]
 
 
+class _RemoteSession:
+    """onnxruntime session run() to the GPU worker"""
+
+    def __init__(self, path, cfg):
+        from . import gpu
+        self._path = path
+        self._runner = gpu.runner()
+        m = self._runner.meta(path)
+        if m is None:
+            raise RuntimeError("gpu worker meta failed")
+        self._in = m["inputs"]
+        self._out = m["outputs"]
+        self._providers = m.get("providers", [])
+
+    def get_inputs(self):
+        return [type("I", (), {"name": n})() for n in self._in]
+
+    def get_outputs(self):
+        return [type("O", (), {"name": o["name"], "shape": o["shape"]})()
+                for o in self._out]
+
+    def get_providers(self):
+        return self._providers
+
+    def run(self, output_names, feed):
+        outs = self._runner.run(self._path, feed)
+        if outs is None:
+            raise RuntimeError("gpu worker run failed")
+        return outs
+
+
+def _gpu_ready(cfg):
+    if not cfg.get("vision_gpu", True):
+        return False
+    try:
+        from . import gpu
+        return gpu.is_linux() and gpu.is_installed()
+    except Exception:
+        return False
+
+
 def _make_session(ort, path, cfg):
-    """Open session"""
+    """Open session. Routes to the GPU worker on linux if possible"""
+    if _gpu_ready(cfg):
+        try:
+            return _RemoteSession(path, cfg)
+        except Exception as e:
+            _note("ep", "gpu worker unavailable (%s); running on CPU" % e)
     prefer = _providers(cfg)
     try:
         return ort.InferenceSession(path, providers=prefer)
@@ -511,14 +557,17 @@ def _model_path(cfg):
     return None
 
 
-def _out_nc(sess):
-    """YOLO class count: output channels - 4. None if shape unreadable/dynamic."""
+def _out_nc(sess, expected=None):
+    """YOLO class count"""
     try:
         shape = sess.get_outputs()[0].shape
     except Exception:
         return None
     if len(shape) == 3 and isinstance(shape[1], int):
-        return shape[1] - 4
+        nc = shape[1] - 4
+        if expected is not None and nc == expected + 1:
+            return nc - 1
+        return nc
     return None
 
 
@@ -544,7 +593,7 @@ def _symbol_session(cfg):
                 _warn("execution provider: %s"
                       % ", ".join(_SYM_SESS.get_providers()))
                 _EP_LOGGED = True
-            nc = _out_nc(_SYM_SESS)
+            nc = _out_nc(_SYM_SESS, len(_SYM_CLASSES))
             if nc is None:
                 _warn("could not read symbol model class count; guard skipped")
             elif nc != len(_SYM_CLASSES):
@@ -687,7 +736,7 @@ def _detect_page(sess, page, cfg, nc, conf, tile):
     if not use_tile:
         dets = _run_det(sess, img, imgsz, nc, conf, iou, np)
     else:
-        overlap = float(cfg.get("vision_tile_overlap", 0.2))
+        overlap = min(0.9, max(0.0, float(cfg.get("vision_tile_overlap", 0.2))))
         dets = []
         for tx0, ty0, tx1, ty1 in _tile_grid(w, h, imgsz, overlap):
             crop = img[ty0:ty1, tx0:tx1]
@@ -800,7 +849,7 @@ def _region_session(cfg):
                 _warn("execution provider: %s"
                       % ", ".join(_RGN_SESS.get_providers()))
                 _EP_LOGGED = True
-            nc = _out_nc(_RGN_SESS)
+            nc = _out_nc(_RGN_SESS, len(_REGION_CLASSES))
             if nc is None:
                 _warn("could not read region model class count; guard skipped")
             elif nc != len(_REGION_CLASSES):
@@ -827,6 +876,21 @@ def _region_boxes(page, cfg):
             conf, tile=False):
         if 0 <= ci < len(_REGION_CLASSES):
             out.append((x0, y0, x1, y1, c, ci))
+    _cache_put(key, out)
+    return out
+
+
+def _page_sections(page, cfg):
+    """Cached page-wide callout sections"""
+    key = _cache_key(page, cfg, "sec")
+    hit = _cache_get(key)
+    if hit is not None:
+        return hit
+    from bubbler import scanpos
+    try:
+        out = scanpos.page_sections(page, cfg)
+    except Exception:
+        out = []
     _cache_put(key, out)
     return out
 
@@ -977,11 +1041,11 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
     sym_dets = _symbol_dets(page, cfg) if cfg.get("vision_symbols", True) else []
     table_cls = _REGION_CLASSES.index("hole_table")
     from . import common
+    sections = (_page_sections(page, cfg)
+                if cfg.get("vision_section_group", True) else [])
     all_hits = []
     for bi, b in enumerate(boxes):
         brect = (b[0], b[1], b[2], b[3])
-        in_block = [w for w in words if _center_in(w, brect)]
-        has_text = [w for w in in_block if str(w[4]).strip()]
         region_cls = (_REGION_CLASSES[int(b[5])]
                       if len(b) > 5 and 0 <= int(b[5]) < len(_REGION_CLASSES)
                       else None)
@@ -990,6 +1054,15 @@ def _region_regex_hits(page, cfg, rect=None, include_bare=False, words=None,
         constraint = cat[2] if cat else None
         if cat_kind == common.KIND_META:
             continue
+        if cat_kind == common.KIND_STACKED and sections:
+            from bubbler import scanpos
+            brect = scanpos.expand_to_section(brect, sections)
+        elif (region_cls == "feature_control_frame"
+              and cfg.get("vision_section_group", True)):
+            from bubbler import scanpos
+            brect = scanpos.grow_box_stack(brect, words)
+        in_block = [w for w in words if _center_in(w, brect)]
+        has_text = [w for w in in_block if str(w[4]).strip()]
         if not common.mode_admits_region(region_cls, cfg):
             continue
         reader = "text"
@@ -1068,6 +1141,39 @@ def extract_hits(page, cfg, rect=None, include_bare=False, words=None,
     except Exception as e:
         _warn("region path failed (%s); falling back to legacy" % e)
         return None
+
+
+def read_rect_words(page, cfg, rect, use_vlm=False):
+    """Read box"""
+    pm = _pixmap(page, cfg)
+    if not pm:
+        return None
+    img, s = pm
+    words = None
+    if use_vlm and cfg.get("vision_vlm"):
+        eng = _vlm_engine(cfg)
+        if eng is not None:
+            words = _vlm_read_block(img, s, rect, eng, _VBLOCK + 9000)
+    if not words:
+        kind, eng = _ocr_engine_for(cfg)
+        if eng is None:
+            return None
+        conf_min = float(cfg.get("vision_ocr_conf", 0.5))
+        words = _ocr_block(img, s, rect, kind, eng, conf_min, _VBLOCK + 9000)
+    words = list(words)
+    if cfg.get("vision_symbols", True):
+        try:
+            sym_dets = _symbol_dets(page, cfg)
+        except Exception:
+            sym_dets = []
+        have = _block_glyphs(words)
+        for env, tok in sym_dets:
+            if not _center_in((env[0], env[1], env[2], env[3]), rect):
+                continue
+            if _glyph_present(tok, have):
+                continue
+            _attach_or_append(words, env, tok)
+    return words
 
 
 def meta_region_at(page, cfg, rect):

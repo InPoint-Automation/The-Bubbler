@@ -64,7 +64,9 @@ APP = {
         ("bubbler/models", "models"),
     ] if (REPO / "bubbler" / "models").is_dir() else []),
 
-    "data_files": [],
+    "data_files": [
+        ("bubbler/gpu_worker.py", "bubbler/gpu_worker.py"),
+    ],
 
     "noinclude_data": [
         "paddle/libs/*.so*",

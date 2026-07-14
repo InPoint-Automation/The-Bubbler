@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QDialog, QGridLayout, QHBoxLayout, QVBoxLayout,
 from .common import TYPES, TIERS, fnum, dp_tol
 from .config import units_of
 from .widgets import fill_keyed, combo_key, set_combo_key
-from .iso2768 import iso2768_tol
+from .iso2768 import iso2768_general_tol
 from .iso286 import fit_limits, is_fit_code
 from .i18n import tr, retranslate
 
@@ -345,7 +345,7 @@ class BubbleDialog(QDialog):
             nom = fnum(self.v_nom.get())
         except ValueError:
             nom = None
-        t = iso2768_tol(nom, self.icls)
+        t = iso2768_general_tol(nom, self.icls, feature=self.v_feat.get())
         if t is not None:
             self.v_tsym.set("%g" % t)
             self.v_ipre.set("ISO 2768-%s → ±%g" % (self.icls, t))
@@ -381,7 +381,7 @@ class BubbleDialog(QDialog):
         elif tsym is not None:
             out["tol_sym"] = tsym
         elif self._iso_auto():
-            t = iso2768_tol(nom, self.icls)
+            t = iso2768_general_tol(nom, self.icls, feature=self.v_feat.get())
             if t is None:
                 t = dp_tol(raw if raw is not None else nom, self.cfg)
             if t is not None:
@@ -397,7 +397,7 @@ class BubbleDialog(QDialog):
         fit = self._metric() and is_fit_code(raw_sym)
         if fit and not is_dia:
             out = {"tol_sym": None, "tol_max": None, "tol_min": None}
-            t = iso2768_tol(nom, self.icls) if self._iso_auto() else None
+            t = iso2768_general_tol(nom, self.icls, feature=self.v_feat.get()) if self._iso_auto() else None
             if t is None:
                 t = dp_tol(raw if raw is not None else nom, self.cfg)
             if t is not None:
@@ -409,7 +409,7 @@ class BubbleDialog(QDialog):
         if typed or not self._iso_auto():
             return self._resolve_tol(nom, raw=raw)
         out = {"tol_sym": None, "tol_max": None, "tol_min": None}
-        t = iso2768_tol(nom, self.icls)
+        t = iso2768_general_tol(nom, self.icls, feature=self.v_feat.get())
         if t is not None:
             out["tol_sym"] = t
         return out

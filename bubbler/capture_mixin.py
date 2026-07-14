@@ -46,14 +46,20 @@ class CaptureMixin:
         p1 = self.viewport.scene_to_page(max(x0, x1), max(y0, y1))
         rx0, ry0 = min(p0[0], p1[0]), min(p0[1], p1[1])
         rx1, ry1 = max(p0[0], p1[0]), max(p0[1], p1[1])
-        if rx1 - rx0 < 3 and ry1 - ry0 < 3:
+        was_drag = not (rx1 - rx0 < 3 and ry1 - ry0 < 3)
+        if not was_drag:
             mx, my = (rx0 + rx1) / 2.0, (ry0 + ry1) / 2.0
             rx0, ry0, rx1, ry1 = self._capture_box(mx, my)
         rect = (rx0, ry0, rx1, ry1)
         sel_rect = (rx0 - 2, ry0 - 2, rx1 + 2, ry1 + 2)
         want_hits = (not self.measure_mode) and (self._hdr_focus is None)
+        # drag
+        force_read = None
+        if was_drag and self.cfg.get("capture_drag_ocr", True):
+            force_read = "vlm" if self.cfg.get("vision_vlm") else "ocr"
         res = self._run_capture(self.page_i, rect, sel_rect,
-                                want_meta=want_hits, want_hits=want_hits)
+                                want_meta=want_hits, want_hits=want_hits,
+                                force_read=force_read)
         if res is None:
             return
         sel = res["sel"]
@@ -89,6 +95,15 @@ class CaptureMixin:
                              "v": mnum.group(0), "t": None, "raw": text,
                              "rect": (rx0, ry0, rx1, ry1)}]
             gtols = self._page_gtols()
+            # drag over bubbles
+            covered = self._bubbles_in_rect((rx0, ry0, rx1, ry1)) \
+                if was_drag else []
+            if covered and hits:
+                rows = [self._capture_full_row(h, gtols) for h in hits]
+                fb = (rx0, ry0, rx1, ry1)
+                ax, ay = self._dir_anchor(hits, fb)     # anchor on exit side
+                self._regroup_capture(covered, rows, ax, ay, rect=fb)
+                return
             if len(hits) == 1:
                 hr = hits[0].get("rect") or (rx0, ry0, rx1, ry1)
                 ax, ay = self._hit_anchor_pt(hits[0], (rx0, ry0, rx1, ry1))
@@ -99,7 +114,7 @@ class CaptureMixin:
                                     rect=hr)
                 return
             if len(hits) > 1:
-                cx, cy = (rx0 + rx1) / 2.0, (ry0 + ry1) / 2.0
+                cx, cy = self._dir_anchor(hits, (rx0, ry0, rx1, ry1))
                 m = QMenu(self)
                 m.addAction(
                     tr('Review %d callouts...') % len(hits),
@@ -192,7 +207,8 @@ class CaptureMixin:
             cache[page_i] = words
         return cache[page_i]
 
-    def _run_capture(self, page_i, rect, sel_rect, want_meta, want_hits):
+    def _run_capture(self, page_i, rect, sel_rect, want_meta, want_hits,
+                     force_read=None):
         if getattr(self, "_cap_loop", None) is not None:
             return None
         self._cap_loop = QEventLoop()
@@ -210,7 +226,7 @@ class CaptureMixin:
             None if "done" in st else d.show())
         task = scanworker.CaptureTask(self.pdf_path, copy.deepcopy(self.cfg),
                                       page_i, rect, sel_rect, want_meta,
-                                      want_hits)
+                                      want_hits, force_read=force_read)
         task.signals.done.connect(self._cap_done)
         task.signals.failed.connect(self._cap_failed)
         QThreadPool.globalInstance().start(task)
@@ -292,3 +308,22 @@ class CaptureMixin:
     def _hit_anchor_pt(hit, fallback_rect):
         r = hit.get("rect") or fallback_rect
         return ((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0)
+
+    def _dir_anchor(self, hits, fb):
+        """Leader anchor"""
+        rects = [h.get("rect") for h in hits if h.get("rect")]
+        if rects:
+            x0 = min(r[0] for r in rects)
+            y0 = min(r[1] for r in rects)
+            x1 = max(r[2] for r in rects)
+            y1 = max(r[3] for r in rects)
+        else:
+            x0, y0, x1, y1 = fb
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        pref = self.cfg.get("offset_dir", "auto")
+        edge = {"n": (cx, y0), "s": (cx, y1),
+                "e": (x1, cy), "w": (x0, cy)}.get(pref)
+        if edge is not None:
+            return edge
+        top = min(hits, key=lambda h: (h.get("rect") or fb)[1])
+        return self._hit_anchor_pt(top, fb)

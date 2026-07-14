@@ -39,7 +39,6 @@ CFG_DEFAULT = {
     "dp_on": False,
     "dp_tols": {"0": 0.5, "1": 0.2, "2": 0.05, "3": 0.01},
     "dp_tols_inch": {"1": 0.03, "2": 0.01, "3": 0.005, "4": 0.0005},
-    "dp_angle": 1.0,         # +/- deg
     "snap_geom": True,
     "tier_shapes": True,
     "tier_shape_map": {"red": "circle", "blue": "square",
@@ -85,6 +84,15 @@ CFG_DEFAULT = {
     "vision_region": True,
     "vision_region_conf": 0.35,
     "vision_region_model": "",    # blank = bundled
+    "vision_gpu": True,             # Linux: use the GPU pack when installed
+    "capture_drag_ocr": True,       # drag-box capture
+    "leader_trim": True,            # stop leader at text
+    "vision_section_group": True,   # grow stacked boxe
+    "vision_section_vgap": 1.6,     # line-heights of vertical
+    "vision_section_hpad": 0.5,     # line-heights of horizontal
+    "vision_debug_overlay": False,  # add the Debug overlay button
+    "vision_debug_on": False,       # overlay drawn
+    "vision_debug_layers": ["sections", "regions", "symbols"],
     "vision_vlm": False,
     "vision_vlm_always": False,
     "vision_vlm_engine": "florence",

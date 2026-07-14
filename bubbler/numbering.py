@@ -86,7 +86,7 @@ def migrate_uids(ledger):
     seen = {}
     nxt = 1
     for d in ledger:
-        if "uid" in d:
+        if isinstance(d.get("uid"), int):
             nxt = max(nxt, d["uid"] + 1)
     for d in ledger:
         if "uid" in d:

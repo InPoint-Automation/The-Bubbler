@@ -15,9 +15,29 @@ from .scanpos import xform_pt
 from .i18n import tr
 
 
+def _rm(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 class ExportMixin:
     def unsaved(self):
         return sum(1 for d in self.ledger if d.get("sheet_row") is None)
+
+    def _resync_sheet_rows(self):
+        """Rewrite committed rows"""
+        dirty = False
+        for d in self.ledger:
+            if d.get("sheet_row"):
+                self.writer.write_row(d["sheet_row"], d)
+                dirty = True
+        if dirty:
+            try:
+                self.writer.save()
+            except Exception:
+                pass
 
     def closeEvent(self, e):
         if self.unsaved():
@@ -29,6 +49,11 @@ class ExportMixin:
                 e.ignore()
                 return
         self._save_session()
+        try:
+            from . import gpu
+            gpu.shutdown()
+        except Exception:
+            pass
         e.accept()
 
     def save(self):
@@ -52,6 +77,7 @@ class ExportMixin:
                 out_pdf = qc_path(self.pdf_path, "_Inspection.pdf", subdir="")
         dlg = None
         doc = None
+        tmp = out_pdf + ".tmp"
         try:
             doc = fitz.open(self.pdf_path)
             npages = doc.page_count
@@ -100,16 +126,19 @@ class ExportMixin:
                     sh = page.new_shape()
                     lead = d.get("leader", (bx, by) != (ax, ay))
                     if (bx, by) != (ax, ay) and lead:
+                        tx, ty = ax, ay
+                        if self.cfg.get("leader_trim", True):
+                            tx, ty = self._leader_target(pi, bx, by, ax, ay)
                         ex = LEADER_EXITS.get(d.get("lexit"))
                         if ex is not None:
                             p0 = pt(bx + ex[0] * rad, by + ex[1] * rad)
                         else:
-                            dx, dy = ax - bx, ay - by
+                            dx, dy = tx - bx, ty - by
                             dist = (dx * dx + dy * dy) ** 0.5 or 1.0
                             p0 = pt(bx + dx / dist * rad, by + dy / dist * rad)
-                        sh.draw_line(p0, pt(ax, ay))
+                        sh.draw_line(p0, pt(tx, ty))
                         sh.finish(color=tcol, width=0.9)
-                        sh.draw_circle(pt(ax, ay), 1.2)
+                        sh.draw_circle(pt(tx, ty), 1.2)
                         sh.finish(color=tcol, fill=tcol, width=0.5)
                     spts = bubble_shape_points(tshape, bx, by, rad)
                     if spts is None:
@@ -126,17 +155,16 @@ class ExportMixin:
                                         color=tcol, align=1, rotate=prot)
             if dlg is not None:
                 dlg.setValue(npages)
-            tmp = out_pdf + ".tmp"
             doc.save(tmp)
             doc.close()
             doc = None
-            os.replace(tmp, out_pdf)
         except Exception as e:
             if doc is not None:
                 try:
                     doc.close()
                 except Exception:
                     pass
+            _rm(tmp)
             if dlg is not None:
                 dlg.reset()
             QMessageBox.critical(
@@ -163,9 +191,11 @@ class ExportMixin:
         except Exception as e:
             for d in marked:
                 d["sheet_row"] = None
+            _rm(tmp)
             QMessageBox.critical(self, tr('Sheet error'), str(e))
             self.refresh_panel()
             return
+        os.replace(tmp, out_pdf)
         try:
             self._save_session()
         except Exception as e:

@@ -764,6 +764,116 @@ def scan_page_positions(page, cfg=None):
     return scan_words(page_words(page), cfg=cfg)
 
 
+_CONT_KW_RE = _re.compile(
+    r"\b(?:THRU|DEEP|DEPTH|C'?BORE|CBORE|CSINK|SPOTFACE|SFACE)\b", _re.I)
+_RADIUS_RE = _re.compile(r"^R\s?\d", _re.I)    # R12 is its own dim, not a fit
+
+
+def _is_continuation(text, max_toks=4):
+    """True if a line modifies the callout above."""
+    t = text.strip()
+    if not t:
+        return False
+    if _DEV_LINE.match(t) or _NX_LINE.match(t):
+        return True
+    if _FIT_LINE.match(t) and not _RADIUS_RE.match(t):
+        return True
+    if len(t.split()) <= max_toks and _CONT_KW_RE.search(t):
+        return True
+    return False
+
+
+def sections_from_words(words, cfg=None):
+    """Cluster words into callout sections"""
+    cfg = cfg or {}
+    vgap_k = float(cfg.get("vision_section_vgap", 1.6))
+    hpad_k = float(cfg.get("vision_section_hpad", 0.5))
+    lines = _split_lines_on_gaps(lines_from_words(words))
+    lines = [l for l in lines if _ltext(l).strip()]
+    order = sorted(range(len(lines)),
+                   key=lambda i: (_lrect(lines[i])[1], _lrect(lines[i])[0]))
+    sections = []
+    for i in order:
+        li = lines[i]
+        ri = _lrect(li)
+        h = max(ri[3] - ri[1], 2.0)
+        best = None
+        if _is_continuation(_ltext(li)):
+            for s in sections:
+                sr = s["rect"]
+                if min(ri[2], sr[2]) - max(ri[0], sr[0]) <= -hpad_k * h:
+                    continue
+                vgap = ri[1] - sr[3]
+                if vgap < -h or vgap > vgap_k * h:
+                    continue
+                if best is None or vgap < best[0]:
+                    best = (vgap, s)
+        if best is not None:
+            s = best[1]
+            s["lines"].append(li)
+            s["rect"] = _union(s["rect"], ri)
+        else:
+            sections.append({"lines": [li], "rect": ri})
+    out = [{"rect": s["rect"], "lines": s["lines"], "n": len(s["lines"])}
+           for s in sections]
+    out.sort(key=lambda s: (s["rect"][1], s["rect"][0]))
+    return out
+
+
+def page_sections(page, cfg=None):
+    """Page-wide callout sections"""
+    return sections_from_words(page_words(page), cfg)
+
+
+def grow_box_stack(brect, words, vgap_k=1.0, hpad_k=0.3, max_grow=4.0):
+    """Grow a box to absorb lines stacked above/below"""
+    x0, y0, x1, y1 = brect
+    bh0 = max(y1 - y0, 2.0)
+    lines = _split_lines_on_gaps(lines_from_words(words))
+    rects = [_lrect(l) for l in lines if _ltext(l).strip()]
+    changed = True
+    while changed:
+        changed = False
+        h = max(y1 - y0, 2.0)
+        for r in rects:
+            if min(x1, r[2]) - max(x0, r[0]) <= -hpad_k * h:
+                continue
+            if r[3] < y0 - vgap_k * h or r[1] > y1 + vgap_k * h:
+                continue
+            nx0, ny0 = min(x0, r[0]), min(y0, r[1])
+            nx1, ny1 = max(x1, r[2]), max(y1, r[3])
+            if (nx0, ny0, nx1, ny1) == (x0, y0, x1, y1):
+                continue
+            if ny1 - ny0 > max_grow * bh0:
+                continue
+            x0, y0, x1, y1 = nx0, ny0, nx1, ny1
+            changed = True
+    return (x0, y0, x1, y1)
+
+
+def expand_to_section(brect, sections, max_grow=6.0):
+    """Grow a box to the section it most overlap"""
+    bh = max(brect[3] - brect[1], 2.0)
+    best = None
+    for s in sections:
+        sr = s["rect"]
+        ox = min(brect[2], sr[2]) - max(brect[0], sr[0])
+        oy = min(brect[3], sr[3]) - max(brect[1], sr[1])
+        if ox <= 0 or oy <= 0:
+            continue
+        inter = ox * oy
+        if best is None or inter > best[0]:
+            best = (inter, sr)
+    if best is None:
+        return brect
+    sr = best[1]
+    grown = (min(brect[0], sr[0]), min(brect[1], sr[1]),
+             max(brect[2], sr[2]), max(brect[3], sr[3]))
+    if grown[3] - grown[1] > max_grow * bh:
+        return brect
+    return grown
+
+
 def _main(argv):
     import fitz
     from .scanlib import scan_normalize, scan_parse

@@ -46,8 +46,8 @@ class GeometryMixin:
     def auto_offset(self, ax, ay, page_i=None, rect=None):
         if page_i is None:
             page_i = self.page_i
-        r = float(self.cfg.get("radius", RADIUS))
-        g = r * 0.9
+        r = max(1.0, float(self.cfg.get("radius", RADIUS)))   # r=0 div-0
+        g = r * 0.35
         pr = self.doc[page_i].rect
         others = [(bx, by) for _, _, _, bx, by in self.page_bubbles(page_i)]
         try:
@@ -55,11 +55,9 @@ class GeometryMixin:
         except Exception:
             words, segs = [], []
         pref = self.cfg.get("offset_dir", "auto")
-        dirs = list(self._DIRS)
-        if pref in ("n", "e", "s", "w"):
-            dirs.sort(key=lambda d: 0 if d[0] == pref else 1)
+        leaders = self.use_leaders()
 
-        def base_pt(dx, dy, extra):
+        def edge(dx, dy):
             bx_, by_ = ax, ay
             if rect is not None:
                 if dx > 0:
@@ -70,10 +68,14 @@ class GeometryMixin:
                     by_ = rect[3]
                 elif dy < 0:
                     by_ = rect[1]
-            return (bx_ + dx * (r + g + extra),
-                    by_ + dy * (r + g + extra))
+            return bx_, by_
 
-        def ok(cx, cy, strict):
+        def pt(dx, dy, dist, perp=0.0):
+            ex_, ey_ = edge(dx, dy)
+            return (ex_ + dx * (r + g + dist) - dy * perp,
+                    ey_ + dy * (r + g + dist) + dx * perp)
+
+        def ok(cx, cy, strict=True):
             if cx - r < 2 or cx + r > pr.width - 2 or \
                     cy - r < 2 or cy + r > pr.height - 2:
                 return False
@@ -90,26 +92,106 @@ class GeometryMixin:
                 return False
             return True
 
-        diag = 0.7071
-        for ring in range(4):
-            extra = ring * (r * 1.6)
-            cands = [base_pt(dx, dy, extra) for _, dx, dy in dirs]
-            if ring:
-                cands += [base_pt(sx * diag, sy * diag, extra)
-                          for sx in (1, -1) for sy in (-1, 1)]
-            for cx, cy in cands:
-                if ok(cx, cy, True):
-                    return cx, cy
-        for _, dx, dy in dirs:
-            cx, cy = base_pt(dx, dy, 0)
-            if ok(cx, cy, False):
-                return cx, cy
-        for e in range(1, 9):
-            cx = min(ax + r * (1 + e) + g, pr.width - r - 2)
-            cy = max(ay - r * e, r + 2)
-            if ok(cx, cy, False):
-                return cx, cy
-        return base_pt(dirs[0][1], dirs[0][2], 0)
+        DIRV = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
+        if pref in DIRV:
+            primary = [DIRV[pref]]
+            fallback = [v for k, v in DIRV.items() if k != pref]
+        else:
+            primary = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            fallback = []
+
+        step = r * 0.5
+        nsteps = int(r * 14.0 / step) + 1
+        found = None
+        # straight out
+        for i in range(nsteps):
+            for dx, dy in primary:
+                cx, cy = pt(dx, dy, i * step)
+                if ok(cx, cy):
+                    found = (cx, cy, dx, dy, i * step)
+                    break
+            if found:
+                break
+        # slight up/down offsets
+        if found is None:
+            for i in range(nsteps):
+                for dx, dy in primary:
+                    for k in range(1, 5):
+                        for sgn in (1, -1):
+                            cx, cy = pt(dx, dy, i * step, sgn * k * step)
+                            if ok(cx, cy):
+                                found = (cx, cy, dx, dy, i * step)
+                                break
+                        if found:
+                            break
+                    if found:
+                        break
+                if found:
+                    break
+        # other cardinals + diagonals
+        if found is None:
+            diag = 0.7071
+            dset = fallback + [(sx * diag, sy * diag)
+                               for sx in (1, -1) for sy in (-1, 1)]
+            for ring in range(5):
+                extra = ring * (r * 1.6)
+                for dx, dy in dset:
+                    cx, cy = pt(dx, dy, extra)
+                    if ok(cx, cy):
+                        found = (cx, cy, dx, dy, extra)
+                        break
+                if found:
+                    break
+        # any direction
+        if found is None:
+            for dx, dy in primary + fallback:
+                cx, cy = pt(dx, dy, 0.0)
+                if ok(cx, cy, strict=False):
+                    found = (cx, cy, dx, dy, 0.0)
+                    break
+        if found is None:
+            dx, dy = primary[0]
+            found = pt(dx, dy, 0.0) + (dx, dy, 0.0)
+
+        cx, cy, dx, dy, dist = found
+        # leaders
+        if leaders:
+            push = 0.20 * (r + g + dist)
+            cx2, cy2 = pt(dx, dy, dist + push)
+            if ok(cx2, cy2):
+                cx, cy = cx2, cy2
+        return cx, cy
+
+    def _leader_target(self, page_i, bx, by, ax, ay):
+        """Leader end point"""
+        r = float(self.cfg.get("radius", RADIUS))
+        key = (page_i, round(bx, 1), round(by, 1), round(ax, 1), round(ay, 1),
+               round(r, 1))
+        cache = self.__dict__.setdefault("_leadtrim_cache", {})
+        if key in cache:
+            return cache[key]
+        try:
+            words, _segs = self._page_obstacles(page_i)
+        except Exception:
+            words = []
+        dx, dy = ax - bx, ay - by
+        L = (dx * dx + dy * dy) ** 0.5
+        tip = (ax, ay)
+        if L >= 1e-6 and words:
+            ux, uy = dx / L, dy / L
+            stepd = max(1.5, r * 0.25)
+            prev = (bx, by)
+            d = r
+            while d <= L:
+                px, py = bx + ux * d, by + uy * d
+                if any(rc[0] <= px <= rc[2] and rc[1] <= py <= rc[3]
+                       for rc in words):
+                    tip = prev
+                    break
+                prev = (px, py)
+                d += stepd
+        cache[key] = tip
+        return tip
 
     def _page_geom(self, page_i=None):
         if page_i is None:
