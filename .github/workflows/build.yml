@@ -71,7 +71,7 @@ jobs:
         run: bin\Bubbler.exe --selftest
       - name: Self-test bundle (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a bin/Bubbler.dist/Bubbler.bin --selftest
+        run: xvfb-run -a bin/Bubbler.dist/Bubbler --selftest
       - name: Self-test bundle (macOS)
         if: runner.os == 'macOS'
         run: bin/Bubbler.app/Contents/MacOS/Bubbler --selftest
