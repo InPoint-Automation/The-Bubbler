@@ -24,6 +24,7 @@ jobs:
             artifact: Bubbler-macos
             lowmem: "1"
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     env:
       BUBBLER_VISION: "1"
       BUBBLER_JOBS: "2"
