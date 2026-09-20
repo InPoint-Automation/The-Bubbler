@@ -1,17 +1,21 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Office-style ribbon toolbar, mixed into MainWindow.
+# Office-style ribbon toolbar mixed into MainWindow.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QComboBox, QCheckBox, QDoubleSpinBox,
-                               QSizePolicy)
+                               QPushButton, QSizePolicy)
 
 from .common import TYPES, TIERS, is_simple
-from .config import units_of
+from .config import gentol_ladder, units_of
+from .scanlib import (GENTOL_SRC_BAND, GENTOL_SRC_BLOCK, GENTOL_SRC_FRAC,
+                      GENTOL_SRC_LADDER_DP, GENTOL_SRC_LADDER_ISO,
+                      GENTOL_SRC_NONE, GENTOL_SRC_STD, GENTOL_SRC_USER,
+                      gentol_readout)
 from .widgets import fill_keyed, combo_key
-from .icons import icon_button, menu_button
+from .icons import icon_button, make_icon, menu_button
 from .theme import OFFICE
 from .i18n import tr
 
@@ -21,7 +25,7 @@ class RibbonMixin:
         g = QWidget()
         g.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Expanding)
         v = QVBoxLayout(g)
-        v.setContentsMargins(3, 2, 3, 1)
+        v.setContentsMargins(1, 2, 1, 1)
         v.setSpacing(1)
         roww = QWidget()
         row = QHBoxLayout(roww)
@@ -46,8 +50,19 @@ class RibbonMixin:
         tb.setFloatable(False)
         self.addToolBar(Qt.TopToolBarArea, tb)
 
+        self.btn_save = icon_button("save", self.save, "Save  Ctrl+S",
+                                    "Save")
+        # close-out own explicit action
+        self.btn_runs = menu_button(
+            "report", "Inspection run", "Run", items=[
+                ("report", "Issue report", self.issue_report),
+                ("check", "Issue and close out inspection",
+                 self.issue_and_close),
+                ("check", "Close out inspection...", self.close_out),
+                ("add", "Start a new run", self.start_new_run),
+                ("pages", "Switch run...", self.switch_run)])
         tb.addWidget(self._rib_group(tr('File'), [
-            icon_button("save", self.save, "Save  Ctrl+S", "Save"),
+            self.btn_save, self.btn_runs,
             icon_button("header", self.header_editor, "Header", "Header"),
             menu_button("settings", "Options", "Options", items=[
                 ("settings", "Settings", self.settings),
@@ -63,10 +78,21 @@ class RibbonMixin:
         self.btn_nav = icon_button("pages", self.toggle_nav,
                                    "Page navigator", "Pages", toggle=True)
         self.btn_nav.setEnabled(self.doc.page_count > 1)
+        # button not label
+        self.lbl_gentol = QPushButton("")
+        self.lbl_gentol.setProperty("i18n_skip", True)
+        self.lbl_gentol.setFlat(True)
+        self.lbl_gentol.setCursor(Qt.PointingHandCursor)
+        # drop button default padding
+        self.lbl_gentol.setSizePolicy(QSizePolicy.Maximum,
+                                      QSizePolicy.Preferred)
+        self.lbl_gentol.setMinimumWidth(0)
+        self.lbl_gentol.clicked.connect(self.edit_gentol)
         tb.addWidget(self._rib_group(tr('Page'), [
-            icon_button("prev", lambda: self.flip(-1), "PgUp", "Prev"),
+            icon_button("prev", lambda: self.flip(-1),
+                        "Previous page  PgUp"),
             self.lbl_page,
-            icon_button("next", lambda: self.flip(1), "PgDn", "Next"),
+            icon_button("next", lambda: self.flip(1), "Next page  PgDn"),
             self.btn_nav]))
         tb.addSeparator()
         tb.addWidget(self._rib_group(tr('View'), [
@@ -106,7 +132,10 @@ class RibbonMixin:
                 ("import", "Import CMM/CSV", self.cmm_import),
                 ("report", "Report bad read...", self.report_bad_read),
                 ("import", "Review corrections...",
-                 self.review_corrections)])]))
+                 self.review_corrections),
+                ("report", "Preview or print output...",
+                 self.preview_output),
+                ("import", "3D preview...", self.show_step_preview)])]))
         tb.addSeparator()
         self.btn_tool_add = icon_button("add", lambda: self.set_tool("add"),
                                         "Add bubbles  A", "Add", toggle=True)
@@ -115,8 +144,17 @@ class RibbonMixin:
                                         lambda: self.set_tool("select"),
                                         "Select/move  V", "Select",
                                         toggle=True)
+        self.btn_autobub = icon_button("check", None,
+                                       "Auto-bubble: click a callout to "
+                                       "bubble it at once. Off: review it "
+                                       "in the dialog first.", None,
+                                       toggle=True, size=16)
+        self.btn_autobub.setChecked(
+            bool(self.cfg.get("click_auto_bubble", True)))
+        self.btn_autobub.toggled.connect(self._autobub_changed)
         tb.addWidget(self._rib_group(tr('Tools'),
-                                     [self.btn_tool_add, self.btn_tool_sel]))
+                                     [self.btn_tool_add, self.btn_tool_sel,
+                                      self.btn_autobub]))
         tb.addSeparator()
 
         self.cb_type = QComboBox()
@@ -131,30 +169,34 @@ class RibbonMixin:
         self.cb_icls = QComboBox()
         self.cb_icls.addItems(["f", "m", "c", "v"])
         self.cb_icls.setCurrentText(self.last["icls"])
-        self.cb_icls.setMaximumWidth(48)
+        self.cb_icls.setMaximumWidth(38)
         self.cb_icls.activated.connect(self._icls_changed)
         self._iso_field = self._field("", self.chk_iso)
         self._icls_field = self._field("class", self.cb_icls)
         self._sync_units_controls()
 
         self.e_tsym = QLineEdit()
-        self.e_tsym.setMaximumWidth(60)
+        self.e_tsym.setMaximumWidth(38)
         self.e_tsym.editingFinished.connect(
             lambda: self._rib_set("tsym", self.e_tsym.text()))
         self.e_tmax = QLineEdit()
-        self.e_tmax.setMaximumWidth(60)
+        self.e_tmax.setMaximumWidth(38)
         self.e_tmax.editingFinished.connect(
             lambda: self._rib_set("tmax", self.e_tmax.text()))
         self.e_tmin = QLineEdit()
-        self.e_tmin.setMaximumWidth(60)
+        self.e_tmin.setMaximumWidth(38)
         self.e_tmin.editingFinished.connect(
             lambda: self._rib_set("tmin", self.e_tmin.text()))
         self.cb_tier = QComboBox()
-        self.cb_tier.addItems(TIERS)
-        self.cb_tier.setCurrentText(self.last["tier"])
+        # "" is AUTO sentinel
+        fill_keyed(self.cb_tier, TIERS, self.last["tier"])
+        self.cb_tier.setItemText(0, tr('auto'))
         self.cb_tier.setMaximumWidth(70)
         self.cb_tier.activated.connect(
-            lambda _i: self._rib_set("tier", self.cb_tier.currentText()))
+            lambda _i: self._rib_set("tier", combo_key(self.cb_tier)))
+        # icon only
+        self.btn_rib_reset = icon_button("rotate", self.reset_ribbon,
+                                         "Reset these to defaults")
         tb.addWidget(self._rib_group(tr('Next bubble'), [
             self._field(tr('type'), self.cb_type),
             self._iso_field,
@@ -162,7 +204,10 @@ class RibbonMixin:
             self._field("tol ±", self.e_tsym),
             self._field("tol max", self.e_tmax),
             self._field("tol min", self.e_tmin),
-            self._field("tier", self.cb_tier)]))
+            self._field("tier", self.cb_tier),
+            self.lbl_gentol,
+            self._field("", self.btn_rib_reset)]))
+        self._sync_gentol()
         tb.addSeparator()
 
         self.chk_lead = QCheckBox(tr('Leaders'))
@@ -171,12 +216,14 @@ class RibbonMixin:
         self.sp_rad = QDoubleSpinBox()
         self.sp_rad.setRange(3, 40)
         self.sp_rad.setDecimals(0)
+        self.sp_rad.setMaximumWidth(58)
         self.sp_rad.setValue(float(self.cfg.get("radius", 9)))
         self.sp_rad.valueChanged.connect(
             lambda v: self._style_set("radius", v))
         self.sp_fsz = QDoubleSpinBox()
         self.sp_fsz.setRange(4, 30)
         self.sp_fsz.setDecimals(0)
+        self.sp_fsz.setMaximumWidth(58)
         self.sp_fsz.setValue(float(self.cfg.get("fontsz", 10)))
         self.sp_fsz.valueChanged.connect(
             lambda v: self._style_set("fontsz", v))
@@ -185,24 +232,26 @@ class RibbonMixin:
             self._field("radius", self.sp_rad),
             self._field("font", self.sp_fsz)]))
         if self.cfg.get("vision_debug_overlay"):
-            tb.addSeparator()
             tb.addWidget(self._debug_ribbon_group())
         self._apply_mode()
 
     def _debug_ribbon_group(self):
         """debug overlay control"""
         from PySide6.QtWidgets import QToolButton, QMenu
-        self.btn_overlay = icon_button("search", self.toggle_debug_overlay,
-                                       "Draw detector boxes over the page",
-                                       "Overlay", toggle=True)
+        # saves ribbon width
+        b = QToolButton()
+        b.setIcon(make_icon("search", None, 22))
+        b.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        b.setToolTip(tr('Debug overlay'))
+        b.setAutoRaise(True)
+        b.setFocusPolicy(Qt.NoFocus)
+        b.setPopupMode(QToolButton.InstantPopup)
+        m = QMenu(b)
+        self.btn_overlay = m.addAction(tr('Overlay'))
+        self.btn_overlay.setCheckable(True)
         self.btn_overlay.setChecked(bool(self.cfg.get("vision_debug_on")))
-        lbtn = QToolButton()
-        lbtn.setText(tr('Layers'))
-        lbtn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        lbtn.setAutoRaise(True)
-        lbtn.setFocusPolicy(Qt.NoFocus)
-        lbtn.setPopupMode(QToolButton.InstantPopup)
-        m = QMenu(lbtn)
+        self.btn_overlay.triggered.connect(self.toggle_debug_overlay)
+        m.addSeparator()
         cur = set(self.cfg.get("vision_debug_layers") or [])
         for key, label in (("sections", tr('Callout sections')),
                            ("regions", tr('Detector blocks')),
@@ -212,8 +261,49 @@ class RibbonMixin:
             act.setChecked(key in cur)
             act.toggled.connect(
                 lambda on, k=key: self._toggle_debug_layer(k, on))
-        lbtn.setMenu(m)
-        return self._rib_group(tr('Debug'), [self.btn_overlay, lbtn])
+        b.setMenu(m)
+        b._menu = m
+        return self._rib_group(tr('Debug'), [b])
+
+    # source -> readout name
+    _GENTOL_SRC = {
+        GENTOL_SRC_BAND: "band table",
+        GENTOL_SRC_BLOCK: "printed .X block",
+        GENTOL_SRC_FRAC: "printed fractions",
+        GENTOL_SRC_STD: "ISO 2768",
+        GENTOL_SRC_LADDER_DP: "settings ladder",
+        GENTOL_SRC_LADDER_ISO: "settings ISO 2768",
+        GENTOL_SRC_NONE: "no general tol",
+        GENTOL_SRC_USER: "corrected by hand",
+    }
+
+    def _sync_gentol(self):
+        """which general tolerance owns current page"""
+        lbl = getattr(self, "lbl_gentol", None)
+        if lbl is None:
+            return
+        try:
+            g = self._page_gtols()
+        except Exception:
+            g = {}
+        src, val, inh = gentol_readout(g, self.cfg, self.drawing)
+        name = tr(self._GENTOL_SRC.get(src, src))
+        line2 = (tr('inherited') + "  " + val).strip() if inh else val
+        lbl.setText(("%s  %s\n%s" % (tr('gen tol'), name, line2)).strip())
+        fixed = src == GENTOL_SRC_USER
+        lbl.setStyleSheet(
+            "font-size:7pt; padding:0px 2px 0px 5px; margin:0px;"
+            "border:none; background:transparent; text-align:left; color:%s;"
+            % ("#2b6cb0" if fixed else
+               "#b7791f" if inh else OFFICE["muted"]))
+        if fixed:
+            tip = tr('Hand-corrected for this drawing. Click to change.')
+        elif inh:
+            tip = tr('From page 1, reused here. Click to correct.')
+        else:
+            tip = tr('The general tolerance the next bubble inherits on this '
+                     'page. Click to correct.')
+        lbl.setToolTip(tip)
 
     def _apply_mode(self):
         simple = is_simple(self.cfg)
@@ -223,8 +313,9 @@ class RibbonMixin:
                 b.setVisible(not simple)
 
     def _sync_units_controls(self):
-        asme = units_of(self.cfg) == "asme_inch"
-        if asme:
+        # names one ladder
+        asme = units_of(self.cfg, self.drawing) == "asme_inch"
+        if gentol_ladder(self.cfg, self.drawing) == "decimal":
             src, tip = "Y14.5 tol", "ASME title-block decimal-place tolerance"
             on = bool(self.cfg.get("dp_on"))
         else:
@@ -237,11 +328,13 @@ class RibbonMixin:
         self.chk_iso.setChecked(on)
         self.chk_iso.blockSignals(False)
         self._icls_field.setVisible(not asme)
+        self._sync_gentol()          # ladder decides readout too
+        self._fill_munits()          # "other" is other system
 
     def _field(self, label, widget, top=None):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(2, 0, 2, 0)
+        v.setContentsMargins(1, 0, 1, 0)
         v.setSpacing(1)
         if top is not None:
             v.addWidget(top)

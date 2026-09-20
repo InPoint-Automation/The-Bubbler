@@ -20,6 +20,7 @@ Free, open source, fully offline.
 - Flag out-of-tolerance results
 - Custom trained region and symbol detector models included
 - Can also leverage a VLM (requires internet to download model from Hugging Face)
+- Optional 3D STEP part preview for the inspection-report header and the recent-files list
 
 ## Requirements
 
@@ -68,20 +69,25 @@ Full license texts for all bundled and depended-on components are in the
 Bundled assets:
 
 - [Lucide](https://github.com/lucide-icons/lucide) - ISC License (portions derived from [Feather](https://github.com/feathericons/feather), MIT) - Toolbar and ribbon icons, recolored at runtime into Qt icons
-- [Florence-2-base-ft](https://huggingface.co/onnx-community/Florence-2-base-ft) - MIT License - Optional VLM callout reader (model weights)
-- [PaddleOCR-VL / PP-OCRv4](https://github.com/PaddlePaddle/PaddleOCR) - Apache-2.0 License - Optional VLM/OCR callout readers (model weights)
 
 Runtime dependencies (installed via `pip`, compiled into the binaries by Nuitka):
 
-- [PyMuPDF](https://github.com/pymupdf/PyMuPDF) - AGPL-3.0 License (or commercial from Artifex) - PDF parsing, rendering, and text/word-box extraction
+- [PyMuPDF](https://github.com/pymupdf/PyMuPDF) - AGPL-3.0 License - PDF parsing, rendering, and text/word-box extraction
 - [PySide6 (Qt for Python)](https://www.qt.io/qt-for-python) - LGPL-3.0 License - GUI framework. Qt ships several licenses [Third Party Licenses/pyside6](Third%20Party%20Licenses/pyside6/)
 - [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) - MIT License - Reading and writing the `.xlsx` inspection sheet
 - [NumPy](https://github.com/numpy/numpy) - BSD-3-Clause License - Array and numerical operations
-- [ONNX Runtime](https://github.com/microsoft/onnxruntime) - MIT License - Runs the detector and reader `.onnx` models (CUDA / DirectML / CPU execution providers)
+- [Pillow](https://github.com/python-pillow/Pillow) - HPND License - Image handling and the software renderer for part previews
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) - MIT License - Runs the detector and reader `.onnx` models
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) - Apache-2.0 License - OCR engine (ships its own ONNX models)
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - Apache-2.0 License - PP-OCRv4 OCR engine and PaddleOCR-VL reader
 - [PaddlePaddle](https://github.com/PaddlePaddle/Paddle) - Apache-2.0 License - Runtime backing the PaddleOCR readers
 - [tokenizers](https://github.com/huggingface/tokenizers) - Apache-2.0 License - Tokenizer for the Florence-2 reader
+
+Optional:
+
+- Weights - [Florence-2-base-ft](https://huggingface.co/onnx-community/Florence-2-base-ft) (MIT License) and [PaddleOCR-VL / PP-OCRv4](https://github.com/PaddlePaddle/PaddleOCR) (Apache-2.0 License) - downloaded from Hugging Face into `~/.bubbler/models` when a VLM/OCR reader is enabled
+- GPU acceleration on Linux - [onnxruntime-gpu](https://github.com/microsoft/onnxruntime) (MIT License), CUDA/cuDNN wheels - installed into `~/.bubbler/`
+- 3D STEP preview - [build123d](https://github.com/gumyr/build123d) (Apache-2.0 License) on top of [Open CASCADE Technology](https://dev.opencascade.org/) (LGPL-2.1 with an additional exception) - installed into `~/.bubbler/` to read and tessellate the STEP part
 
 Training also uses
 [Ultralytics](https://github.com/ultralytics/ultralytics) (AGPL-3.0),

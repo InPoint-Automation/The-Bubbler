@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Context-sensitive hotbar. Floating pill of keyed actions.
+# Floating pill of keyed actions.
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QFrame, QWidget, QLabel, QGridLayout,
                                QHBoxLayout, QVBoxLayout,
                                QGraphicsDropShadowEffect)
 
-MAX_ACTIONS = 10
+MAX_ACTIONS = 12  # fits select-tool's 11
 COLS = 5
 
 GRAD_PILL = ("qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #f8fbfe, "

@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Reader-correction collector, opt-in local-only never phones home.
+# Opt-in local-only reader-correction collector.
 
 import os
 import json
@@ -88,11 +88,15 @@ class CorrectionsMixin:
         at = tuple(self.dlg_pos) if self.dlg_pos else None
         nxt = self.store.next_number(self.page_i)
         dlg = BubbleDialog(self, nxt, last=self.last, at=at, cfg=self.cfg,
+                           session=self.drawing, gtols=self.gtols_now(),
                            leader_default=self.use_leaders())
-        dlg.exec()
-        if not dlg.result_rows:
+        try:
+            dlg.exec()
+            rows = dlg.result_rows
+        finally:
+            dlg.deleteLater()        # drop C++ object too
+        if not rows:
             return
-        rows = dlg.result_rows
         x0, y0, x1, y1 = rect
         png, cw, ch = self._crop_png(rect)
         rec = {
@@ -103,6 +107,7 @@ class CorrectionsMixin:
             "crop": {"w": cw, "h": ch, "dpi": 300},
             "labels": {
                 "region_class": corrections.region_class_for(rows),
+                "predicted_region_class": corrections.predicted_class(reader),
                 "symbols": corrections.symbols_for(rows),
             },
             "correct": rows,
@@ -115,13 +120,18 @@ class CorrectionsMixin:
         base = corrections.write_correction(
             corrections.corrections_dir(self.cfg), rec, png, stamp)
         if base:
+            self._corrections_made = getattr(self, "_corrections_made", 0) + 1
             self.set_status(tr('correction saved'))
         else:
             self.set_status(tr('could not save correction'))
 
     def _crop_png(self, rect):
+        return self._region_crop_png(self.page_i, rect)
+
+    def _region_crop_png(self, page_index, rect):
+        """300-dpi crop of any page in unrotated points."""
         try:
-            page = self.doc[self.page_i]
+            page = self.doc[page_index]
             x0, y0, x1, y1 = rect
             try:
                 prot = int(getattr(page, "rotation", 0) or 0) % 360
@@ -138,6 +148,40 @@ class CorrectionsMixin:
             return pix.tobytes("png"), pix.width, pix.height
         except Exception:
             return None, 0, 0
+
+    def _collect_acceptances(self, rows):
+        """One local-only ACCEPTANCE per just-shipped bubbled row."""
+        if not self.cfg.get("collect_acceptances") or not rows:
+            return
+        try:
+            dirpath = corrections.acceptances_dir(self.cfg)
+            tag = self._drawing_tag()
+        except Exception:
+            return
+        for d in rows:
+            # skip one bad crop
+            try:
+                cx, cy = d.get("x"), d.get("y")
+                if cx is None or cy is None:
+                    continue                  # no anchor to crop
+                page = int(d.get("page", 0))
+                # scan rect else rebuilt
+                box = d.get("rect")
+                if not box:
+                    # grouped x/y is centroid
+                    pre = d.get("_pre_group_xy")
+                    if pre:
+                        cx, cy = pre
+                    box = self._capture_box(cx, cy)
+                png, cw, ch = self._region_crop_png(page, box)
+                rec = corrections.acceptance_rec(d, page, box, cw, ch, tag,
+                                                 version=common.VERSION)
+                if png:
+                    rec["crop_sha"] = hashlib.sha1(png).hexdigest()[:16]
+                corrections.write_correction(dirpath, rec, png,
+                                             self._corr_stamp())
+            except Exception:
+                continue                      # capture is best-effort
 
     def _corr_stamp(self):
         n = getattr(self, "_corr_seq", 0) + 1
@@ -160,6 +204,7 @@ class CorrectionsMixin:
             self._corr_fill()
             return
         dlg = QDialog(self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose, True)   # free on close
         dlg.setWindowTitle(tr('Review corrections'))
         lay = QVBoxLayout(dlg)
         self._corr_head = QLabel("")
@@ -256,7 +301,7 @@ class CorrectionsMixin:
         if not stamps:
             QMessageBox.information(
                 self, tr('Export corrections'),
-                tr('No corrections collected yet.'))
+                tr('No corrections yet.'))
             return
         zpath = self._zip_corrections(dirp)
         if not zpath:
@@ -281,8 +326,8 @@ class CorrectionsMixin:
     def _offer_submit(self, dirp, zpath, count):
         box = QMessageBox(self)
         box.setWindowTitle(tr('Export corrections'))
-        box.setText(tr('Saved %d correction(s) to a zip. Nothing is sent '
-                       'automatically; attach the zip yourself.') % count)
+        box.setText(tr('Saved %d correction(s) to a zip. Nothing is sent; '
+                       'attach the zip yourself.') % count)
         box.setInformativeText("%s\n%s" % (tr('Zip:'), zpath))
         b_folder = box.addButton(tr('Open folder'), QMessageBox.ActionRole)
         b_issue = box.addButton(tr('Open GitHub issue'),

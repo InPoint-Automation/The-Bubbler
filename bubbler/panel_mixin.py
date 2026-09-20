@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Bubble list dock. QTableView over sort/filter proxy.
+# Bubble list dock over sort/filter proxy.
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QShortcut, QKeySequence
@@ -10,10 +10,12 @@ from PySide6.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                                QAbstractItemView, QMenu)
 
 from .common import base_of
-from .config import save_cfg, CFG_DEFAULT
+from .config import save_cfg, units_of, CFG_DEFAULT
 from .panel_model import (BubbleTableModel, BubbleFilterProxy,
                           PANEL_COLS, INLINE_COLS)
 from .i18n import tr
+
+PANEL_MIN_W = 160      # below list unreadable
 
 
 class PanelMixin:
@@ -37,7 +39,9 @@ class PanelMixin:
         bar.addWidget(cols_btn)
         lay.addLayout(bar)
 
-        self._model = BubbleTableModel(self.store, self)
+        self._model = BubbleTableModel(
+            self.store, self,
+            units=lambda: units_of(self.cfg, self.drawing))
         self._proxy = BubbleFilterProxy(self)
         self._proxy.setSourceModel(self._model)
         self.table = QTableView()
@@ -49,7 +53,12 @@ class PanelMixin:
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
-        for i, (_, _, w) in enumerate(PANEL_COLS):
+        saved_w = self.cfg.get("panel_col_w") or {}
+        for i, (key, _, w) in enumerate(PANEL_COLS):
+            try:
+                w = int(saved_w.get(key, w))
+            except (TypeError, ValueError):
+                pass
             self.table.setColumnWidth(i, w)
         self.table.doubleClicked.connect(self._panel_double)
         self.table.selectionModel().selectionChanged.connect(
@@ -64,6 +73,41 @@ class PanelMixin:
         self.dock.visibilityChanged.connect(self._dock_vis)
         vis = self.cfg.get("panel_cols", CFG_DEFAULT["panel_cols"])
         self._apply_col_visibility(vis)
+
+    def _apply_panel_width(self):
+        """Saved dock width clamped to window once."""
+        if getattr(self, "_panel_w_done", False):
+            return
+        self._panel_w_done = True
+        try:
+            w = int(self.cfg.get("panel_w") or 0)
+        except (TypeError, ValueError):
+            return
+        if w < PANEL_MIN_W:               # first run or collapsed
+            return
+        cap = int(self.width() * 0.6)     # wider monitor last time
+        if cap >= PANEL_MIN_W:
+            w = min(w, cap)
+        self.resizeDocks([self.dock], [w], Qt.Horizontal)
+
+    def _save_panel_width(self):
+        """Dock and column widths for next session."""
+        tbl = getattr(self, "table", None)
+        if tbl is not None:
+            cols = {}
+            for i, (key, _, _) in enumerate(PANEL_COLS):
+                if not tbl.isColumnHidden(i):     # hidden columns read 0
+                    w = int(tbl.columnWidth(i))
+                    if w > 0:
+                        cols[key] = w
+            if cols:
+                self.cfg["panel_col_w"] = cols
+        try:
+            w = int(self.dock.width())
+        except Exception:
+            return
+        if w >= PANEL_MIN_W:
+            self.cfg["panel_w"] = w
 
     def _filter_rows(self, _text=None):
         self._apply_filter()
@@ -121,6 +165,7 @@ class PanelMixin:
         except Exception:
             pass
         if visible:
+            self._apply_panel_width()
             self.refresh_panel()
 
     def toggle_panel(self):

@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# CMM/CSV measurement import: values by balloon number into a chosen op.
+# CMM/CSV measurement import by balloon number
 
 from PySide6.QtWidgets import (QFileDialog, QMessageBox, QInputDialog,
                                QDialog, QVBoxLayout, QLabel, QTableWidget,
@@ -14,7 +14,7 @@ from .i18n import tr
 
 class ImportMixin:
     def _cmm_preview(self, records, m, errors):
-        """Show matched/unmatched/duplicate rows before applying. True=proceed."""
+        """Confirm matched/unmatched/duplicate rows before apply"""
         status = {}
         for idx, rec in m["matched"]:
             tgt = self.ledger[idx].get("bubble") if idx < len(self.ledger) else "?"
@@ -78,7 +78,7 @@ class ImportMixin:
         records, errors = parse_cmm_csv(text)
         if not records:
             QMessageBox.information(self, tr('Import CMM/CSV'),
-                                    tr('No rows found in the file.'))
+                                    tr('No rows in file.'))
             return
         m = match_to_ledger(records, self.ledger)
         if not self._cmm_preview(records, m, errors):
@@ -103,11 +103,14 @@ class ImportMixin:
         for idx, rec in matched:
             self._record_op_into(self.ledger[idx], op, rec["value"],
                                  rec.get("gage"))
-        self._save_session()
+        sess_ok = self._save_session()
         self.refresh_panel()
         self.redraw_overlay()
 
         parts = [tr('Imported %d into %s') % (len(matched), op)]
+        if not sess_ok:                   # in memory only
+            parts.append(tr('NOT saved - session file is read-only or '
+                            'write failed.'))
         if m["unmatched"]:
             nums = ", ".join(str(r["bubble"]) for r in m["unmatched"][:20])
             parts.append(tr('%d unmatched: %s') % (len(m["unmatched"]), nums))
@@ -116,4 +119,7 @@ class ImportMixin:
         if m["no_base"] or errors:
             parts.append(tr('%d bad rows') % (len(m["no_base"]) + len(errors)))
         QMessageBox.information(self, tr('Import CMM/CSV'), "\n".join(parts))
-        self.set_status(tr('imported %d measurements') % len(matched))
+        if not sess_ok:
+            self.set_status(tr('session NOT saved'), icon="warn")
+        else:
+            self.set_status(tr('imported %d measurements') % len(matched))

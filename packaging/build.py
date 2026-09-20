@@ -69,6 +69,7 @@ APP = {
 
     "noinclude_data": [
         "paddle/libs/*.so*",
+        "models/florence2-*/**",
     ],
 
     "nofollow": [

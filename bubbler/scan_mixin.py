@@ -27,10 +27,10 @@ class ScanMixin:
         QMessageBox.information(
             self, tr('Scan'),
             tr("Drag a GREEN box around the area to scan, then a RED box "
-               "around any print detail to ignore. Enter skips a box, Esc "
-               "cancels. / Przeciągnij ZIELONE pole wokół obszaru do "
-               "skanowania, potem CZERWONE wokół szczegółu do pominięcia. "
-               "Enter pomija, Esc anuluje."))
+               "over any detail to ignore. Enter skips a box, Esc cancels. "
+               "/ Przeciągnij ZIELONE pole wokół obszaru do skanowania, "
+               "potem CZERWONE na szczegół do pominięcia. Enter pomija, "
+               "Esc anuluje."))
         self._scan_region_mode = "include"
         self.set_status(
             "Scan: drag a GREEN box around the area to scan / "

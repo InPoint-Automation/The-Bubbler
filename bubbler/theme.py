@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# MS-Office 2010 blue-ribbon theme. OFFICE palette + QSS.
+# MS-Office 2010 blue-ribbon OFFICE palette + QSS.
 
 from PySide6.QtGui import QColor
 

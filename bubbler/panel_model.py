@@ -1,13 +1,14 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Bubble-panel table model, sort/filter proxy.
+# Bubble-panel table model and filter proxy.
 
 from PySide6.QtCore import (Qt, QAbstractTableModel, QModelIndex,
                             QSortFilterProxyModel)
 from PySide6.QtGui import QColor
 
 from .common import tol_text, out_of_tol
+from .units import MM, format_nominal
 from .i18n import tr
 
 PANEL_COLS = [("bubble", "#", 45), ("feature", "feature/cecha", 130),
@@ -37,9 +38,10 @@ def bubble_sortkey(bub):
     return base + frac / 1000.0
 
 
-def cell_text(d, key):
+def cell_text(d, key, units=MM):
+    """One cell as shown."""
     if key == "nominal":
-        return "" if d.get("nominal") is None else "%.2f" % d["nominal"]
+        return format_nominal(d.get("nominal"), units)
     if key == "tol":
         return tol_text(d)
     if key == "pin":
@@ -72,9 +74,17 @@ def _sort_value(d, key):
 
 
 class BubbleTableModel(QAbstractTableModel):
-    def __init__(self, store, parent=None):
+    def __init__(self, store, parent=None, units=None):
         super().__init__(parent)
         self.store = store
+        self._units = units  # callable units change mid-session
+
+    def units(self):
+        u = self._units
+        try:
+            return u() if callable(u) else (u or MM)
+        except Exception:
+            return MM
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.store.ledger)
@@ -88,14 +98,14 @@ class BubbleTableModel(QAbstractTableModel):
         d = self.store.ledger[index.row()]
         key = PANEL_COLS[index.column()][0]
         if role == Qt.DisplayRole:
-            return cell_text(d, key)
+            return cell_text(d, key, self.units())
         if role == Qt.TextAlignmentRole:
             return int(Qt.AlignCenter)
         if role == Qt.ForegroundRole:
             return _OOT_COLOR if out_of_tol(d) else None
         if role == SORT_ROLE:
             sk = _sort_value(d, key)
-            return cell_text(d, key) if sk is None else sk
+            return cell_text(d, key, self.units()) if sk is None else sk
         if role == LEDGER_ROLE:
             return index.row()
         return None

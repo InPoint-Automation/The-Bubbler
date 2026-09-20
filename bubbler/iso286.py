@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# ISO 286-1 fit limits, nominal 0 < D <= 500 mm.
+# ISO 286-1 shaft/hole fit limits.
 
 import re as _re
 
@@ -54,6 +54,11 @@ SHAFT_EI_SPLIT = {
 _FITCODE = _re.compile(r"^(JS|js|[A-HK-NPRSa-hk-nprs])(\d{1,2})$")
 
 
+def in_range(D):
+    """True if D within ISO 286 table 0 < D <= 500 mm"""
+    return D is not None and 0 < D <= BANDS[-1]
+
+
 def band_index(D):
     if D is None or D <= 0 or D > BANDS[-1]:
         return None
@@ -64,7 +69,7 @@ def band_index(D):
 
 
 def it_value(D, grade):
-    """Standard tolerance ITn in µm, or None past table."""
+    """Standard tolerance ITn in µm else None past table"""
     bi = band_index(D)
     row = IT.get(grade)
     if bi is None or row is None:
@@ -80,7 +85,7 @@ def _split_ei(letter, D):
 
 
 def _shaft_ei(letter, D, grade):
-    """Lower deviation ei (µm) of a shaft letter k..s for the rules."""
+    """Lower deviation ei µm for shaft letter k..s"""
     bi = band_index(D)
     if bi is None:
         return None
@@ -92,7 +97,7 @@ def _shaft_ei(letter, D, grade):
 
 
 def _delta(D, grade):
-    """delta = ITn - IT(n-1); 0 for sizes <= 3 mm."""
+    """delta = ITn - IT(n-1) zero for D <= 3 mm"""
     if D <= 3:
         return 0
     a = it_value(D, grade)
@@ -103,7 +108,7 @@ def _delta(D, grade):
 
 
 def fit_limits(D, code):
-    """(upper, lower) deviations in mm for fit `code` at nominal D."""
+    """(upper, lower) deviations in mm for fit `code` at nominal D"""
     if D is None:
         return None
     m = _FITCODE.match(str(code).strip())
@@ -167,7 +172,7 @@ def fit_limits(D, code):
 
 
 def is_fit_code(s):
-    """True if s is a fit class we can resolve"""
+    """True if s resolvable fit class"""
     s = str(s or "").strip()
     if not _FITCODE.match(s):
         return False

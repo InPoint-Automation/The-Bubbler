@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Off-thread page scan worker. Own fitz.Document per task.
+# Off-thread page scan worker
 
 import sys
 
@@ -9,7 +9,8 @@ import fitz
 from PySide6.QtCore import QObject, QRunnable, Signal
 
 from . import vision
-from .scanlib import scan_normalize, scan_parse, parse_general_tols
+from .scanlib import (scan_normalize, scan_parse,
+                      parse_general_tols, inherit_gtols)
 from .scanpos import scan_words, page_words
 
 
@@ -77,8 +78,36 @@ def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
                   file=sys.stderr)
         if progress is not None:
             progress(i + 1, total)
+    inherit_gtols(gtols, pages)
+    _inherit_offscan(doc, gtols, pages)
     return {"found": found, "gtols": gtols, "any_text": any_text,
             "vwords": vwords}
+
+
+def _inherit_offscan(doc, gtols, pages):
+    """Single-page scan inherits unscanned sheet's block"""
+    if any(gtols.get(pg) for pg in pages):
+        return gtols
+    try:
+        npages = doc.page_count
+    except Exception:
+        return gtols
+    if len(pages) >= npages:
+        return gtols
+    seen = set(pages)
+    for pg in range(npages):
+        if pg in seen:
+            continue
+        try:
+            g = parse_general_tols(doc[pg].get_text("text"))
+        except Exception:
+            continue
+        if g:
+            gtols[pg] = g
+            inherit_gtols(gtols, list(pages) + [pg])
+            del gtols[pg]
+            break
+    return gtols
 
 
 def _words_in_rect(words, rx0, ry0, rx1, ry1):
@@ -109,7 +138,7 @@ def _words_text(words):
 
 
 def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
-                   force_read=None):
+                   force_read=None, ocr_fallback=False):
     vcache = {}
     words = None
     sel = None
@@ -128,6 +157,16 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
     if sel is None:
         words = _aug_words(doc, page_i, cfg, vcache)
         sel = _words_in_rect(words, *sel_rect)
+    if not sel and ocr_fallback and not force_read:
+        # snapped click, empty text layer: read pixels
+        try:
+            sel = vision.read_rect_words(doc[page_i], cfg, sel_rect,
+                                         use_vlm=bool(cfg.get("vision_vlm")))
+        except Exception as e:
+            print("bubbler: click OCR fallback failed (%s)" % e,
+                  file=sys.stderr)
+            sel = None
+        forced = bool(sel)
     text = _words_text(sel)
     out = {"vwords": vcache, "sel": sel, "text": text,
            "meta": None, "hits": None, "forced": forced}
@@ -153,6 +192,21 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
             print("bubbler: extract_hits skipped (%s)" % e, file=sys.stderr)
         if hits is None:
             hits = scan_words(sel, include_bare=True, cfg=cfg)
+        if not hits and ocr_fallback:
+            # text did not parse: read pixels
+            try:
+                osel = vision.read_rect_words(
+                    doc[page_i], cfg, sel_rect,
+                    use_vlm=bool(cfg.get("vision_vlm")))
+            except Exception as e:
+                print("bubbler: click OCR retry failed (%s)" % e,
+                      file=sys.stderr)
+                osel = None
+            if osel:
+                out["sel"] = osel
+                out["text"] = _words_text(osel)
+                out["forced"] = True
+                hits = scan_words(osel, include_bare=True, cfg=cfg)
         out["hits"] = hits
     return out
 
@@ -218,7 +272,7 @@ class _CaptureSignals(QObject):
 class CaptureTask(QRunnable):
 
     def __init__(self, pdf_path, cfg, page_i, rect, sel_rect, want_meta,
-                 want_hits, force_read=None):
+                 want_hits, force_read=None, ocr_fallback=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.cfg = cfg
@@ -228,6 +282,7 @@ class CaptureTask(QRunnable):
         self.want_meta = want_meta
         self.want_hits = want_hits
         self.force_read = force_read
+        self.ocr_fallback = ocr_fallback
         self.signals = _CaptureSignals()
 
     def run(self):
@@ -236,7 +291,8 @@ class CaptureTask(QRunnable):
             doc = fitz.open(self.pdf_path)
             result = capture_region(doc, self.cfg, self.page_i, self.rect,
                                     self.sel_rect, self.want_meta,
-                                    self.want_hits, force_read=self.force_read)
+                                    self.want_hits, force_read=self.force_read,
+                                    ocr_fallback=self.ocr_fallback)
             self.signals.done.emit(result)
         except Exception as e:
             self.signals.failed.emit(str(e))

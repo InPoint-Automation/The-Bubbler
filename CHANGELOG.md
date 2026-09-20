@@ -1,5 +1,17 @@
 # Changelog
 
+### Version v0.3.0
+- Better detector model / more classes
+- Inspection report appended to the ballooned PDF
+- Choose inspection type
+- Handles multiple inspection runs
+- Reworked inspection sheet
+- Group bubbles under one balloon
+- Optional 3D STEP part preview
+- Improved open dialog
+- Improved settings layout
+- Many more fixes
+
 ### Version v0.2.4
 - Fix Florence not working on drag callouts
 - Fix MacOS build issue

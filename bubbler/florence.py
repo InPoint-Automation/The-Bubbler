@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Florence-2 ONNX reader. Optional Path-B VLM. UN-VALIDATED.
+# Unvalidated Florence-2 ONNX Path-B VLM reader
 import os
 import re
 
@@ -48,7 +48,7 @@ _DL_GRAPHS = ("vision_encoder", "embed_tokens", "encoder_model",
 
 
 def user_models_dir():
-    """Writable models root for on-demand downloads (~/.bubbler/models)."""
+    """Writable models root for on-demand downloads ~/.bubbler/models."""
     return os.path.join(os.path.expanduser("~"), ".bubbler", "models")
 
 
@@ -200,7 +200,7 @@ def can_load(cfg, model_root=None):
 
 
 class Florence2:
-    """Lazily-loaded Florence-2 ONNX reader. Construct via ``load``."""
+    """Lazily-loaded Florence-2 ONNX reader (built via load)."""
 
     def __init__(self, sessions, tok, np):
         self._s = sessions
@@ -241,7 +241,6 @@ class Florence2:
 
     def read_regions(self, img_rgb):
         """OCR_WITH_REGION -> (quad_box, text, 1.0) in crop pixels."""
-        np = self._np
         h, w = img_rgb.shape[0], img_rgb.shape[1]
         if h < 2 or w < 2:
             return []
@@ -329,7 +328,7 @@ class Florence2:
         out_names = [o.name for o in dec.get_outputs()]
         present_map = {o: o.replace("present", "past_key_values")
                        for o in out_names if o.startswith("present")}
-        # cross-attn KV reused; overwriting corrupts it
+        # overwrite corrupts cross-attn KV
         dec_present = {o: p for o, p in present_map.items() if ".decoder." in o}
         enc_present = {o: p for o, p in present_map.items() if ".encoder." in o}
         generated = [_DECODER_START]
@@ -377,7 +376,7 @@ class Florence2:
             locs = [int(x) for x in _LOC.findall(m.group(2))]
             if len(locs) < 8 or not label:
                 continue
-            # bins -> pixels at bin centre, num_bins=1000
+            # num_bins=1000 bin centre
             pts = []
             for i in range(0, 8, 2):
                 x = (locs[i] + 0.5) / 1000.0 * w
@@ -387,7 +386,7 @@ class Florence2:
         return out
 
     def warmup(self):
-        """One dummy pass to JIT DirectML shaders off critical path."""
+        """Dummy pass to JIT DirectML shaders off critical path."""
         if self._warmed:
             return
         self._warmed = True

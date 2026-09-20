@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Out-of-tolerance report. Read-only dialog + CSV export.
+# Out-of-tolerance report dialog and CSV export
 
 import csv
 

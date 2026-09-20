@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# calculator
+# safe arithmetic eval for measure entry
 
 import ast
 import math
@@ -30,6 +30,13 @@ _FUNCS = {
     "min": min, "max": max, "sin": math.sin, "cos": math.cos,
     "tan": math.tan, "radians": math.radians, "degrees": math.degrees,
     "hypot": math.hypot, "atan": math.atan, "atan2": math.atan2,
+    # QA/QC: degrees are what a drawing carries, and true position from
+    # its x/y deviations (2 x sqrt(x^2 + y^2))
+    "sind": lambda x: math.sin(math.radians(x)),
+    "cosd": lambda x: math.cos(math.radians(x)),
+    "tand": lambda x: math.tan(math.radians(x)),
+    "atand": lambda x: math.degrees(math.atan(x)),
+    "tp": lambda x, y: 2.0 * math.hypot(x, y),
 }
 _CONSTS = {"pi": math.pi, "tau": math.tau, "e": math.e}
 
@@ -56,7 +63,7 @@ def _eval_node(node):
 
 
 def _prep(expr):
-    """^ -> **, comma decimals -> dots."""
+    """normalize operators and comma decimals"""
     s = expr.strip()
     s = s.replace("^", "**").replace("×", "*").replace("÷", "/")
     s = s.replace("−", "-")
@@ -66,7 +73,7 @@ def _prep(expr):
 
 
 def safe_eval(expr):
-    """Eval arithmetic. Float, or None if invalid."""
+    """eval arithmetic to float or None"""
     if not expr or not expr.strip():
         return None
     try:
@@ -84,7 +91,7 @@ def safe_eval(expr):
 
 
 def format_num(v):
-    """Trim float noise + trailing zeros."""
+    """trim float noise and trailing zeros"""
     if v is None:
         return ""
     v = round(float(v), 10)
@@ -98,7 +105,7 @@ _AMBIG_OPS = set("+-/")
 
 
 def _auto_eval(s):
-    """Bare entry is arithmetic?"""
+    """bare entry is arithmetic"""
     if any(c in _FORCE_OPS for c in s):
         return True
     body = s[1:]
@@ -108,12 +115,12 @@ def _auto_eval(s):
 
 
 def split_readings(text):
-    """whitespace/semicolons"""
+    """split on whitespace and semicolons"""
     return [t for t in re.split(r"[\s;]+", (text or "").strip()) if t]
 
 
 def eval_measure(text):
-    """measure entry"""
+    """eval measure entry"""
     s = (text or "").strip()
     if not s:
         return s, False

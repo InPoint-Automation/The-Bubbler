@@ -1,13 +1,13 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Quick-access bar ("hotbar") for MainWindow.
+# Quick-toggle hotbar for MainWindow.
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMenu
 
 from .common import TYPES, TIERS
-from .config import save_cfg, units_of
+from .config import gentol_ladder, save_cfg, units_of
 from .hotbar import Hotbar, HotbarAction
 from .widgets import set_combo_key
 from .i18n import tr
@@ -61,19 +61,19 @@ class HotbarMixin:
     def _cycle_type(self):
         cur = self.last.get("type", TYPES[0])
         i = (TYPES.index(cur) + 1) % len(TYPES) if cur in TYPES else 0
-        self._rib_set("type", TYPES[i], group=True)
+        self._rib_set("type", TYPES[i])
         set_combo_key(self.cb_type, TYPES[i])
 
     def _set_type_index(self, i):
         if 0 <= i < len(TYPES):
-            self._rib_set("type", TYPES[i], group=True)
+            self._rib_set("type", TYPES[i])
             set_combo_key(self.cb_type, TYPES[i])
 
     def _cycle_tier(self):
         cur = self.last.get("tier", "")
         i = (TIERS.index(cur) + 1) % len(TIERS) if cur in TIERS else 0
         self._rib_set("tier", TIERS[i])
-        self.cb_tier.setCurrentText(TIERS[i])
+        set_combo_key(self.cb_tier, TIERS[i])
 
     def _toggle_cfg(self, key):
         self.cfg[key] = not self.cfg.get(key)
@@ -114,6 +114,8 @@ class HotbarMixin:
         A = HotbarAction
         if self.tool == "select":
             n = len(self.sel)
+            grouped = any(d.get("user_group") for d in self.ledger
+                          if d.get("uid") in self.sel)
             return [
                 A("tool_add", "A", tr('Add tool'),
                   lambda: self.set_tool("add")),
@@ -121,11 +123,17 @@ class HotbarMixin:
                   lambda: self.align_sel("h"), enabled=n >= 2),
                 A("align_col", "C", tr('Align col'),
                   lambda: self.align_sel("v"), enabled=n >= 2),
-                A("dist_h", "H", "Distribute H / Rozłóż H",
+                A("dist_h", "H", tr('Distribute H'),
                   lambda: self.distribute_sel("h"), enabled=n >= 3),
                 A("dist_v", "W", tr('Distribute V'),
                   lambda: self.distribute_sel("v"), enabled=n >= 3),
-                A("delete", "Del", "Delete / Usuń",
+                A("leader_row", "L", tr('Leader on/off'),
+                  self.toggle_sel_leaders, enabled=n >= 1),
+                A("group", "G", tr('Group into one'),
+                  self.group_selection, enabled=n >= 2),
+                A("ungroup", "U", tr('Ungroup'),
+                  self.ungroup_selection, enabled=grouped),
+                A("delete", "Del", tr('Delete'),
                   self.delete_selection, enabled=n >= 1),
                 A("clear", "Esc", tr('Clear sel.'),
                   self._esc, enabled=n >= 1),
@@ -133,20 +141,19 @@ class HotbarMixin:
                   lambda: self._kbd_toggle("m")),
             ]
         return [
-            A("type", "1-7", "Type / Typ: %s"
+            A("type", "1-7", tr('Type: %s')
               % self.last.get("type", "?").split(" /")[0], self._cycle_type),
-            A("tier", "T", "Tier: %s" % (self.last.get("tier") or "-"),
-              self._cycle_tier),
+            A("tier", "T", "Tier: %s"
+              % (self.last.get("tier") or tr('auto')), self._cycle_tier),
             A("iso", "I", "%s: %s"
-              % ("Y14.5 tol" if units_of(self.cfg) == "asme_inch"
-                 else "ISO auto",
-                 "on" if (self.cfg.get("dp_on")
-                          if units_of(self.cfg) == "asme_inch"
-                          else self.last.get("iso_on")) else "off"),
+              % ("Y14.5 tol" if gentol_ladder(
+                  self.cfg, self.drawing) == "decimal" else "ISO auto",
+                 "on" if self.last.get("iso_on") else "off"),
               lambda: self.chk_iso.setChecked(not self.chk_iso.isChecked())),
-            A("dec", "D", "Dec. tol: %s"
-              % ("on" if self.cfg.get("dp_on") else "off"),
-              lambda: self._toggle_cfg("dp_on")),
+            A("units", "U", "Units: %s"
+              % ("inch" if units_of(self.cfg, self.drawing) == "asme_inch"
+                 else "mm"),
+              self._units_menu),
             A("leaders", "L", "Leaders: %s"
               % ("on" if self.use_leaders() else "off"),
               lambda: self.chk_lead.setChecked(not self.chk_lead.isChecked())),

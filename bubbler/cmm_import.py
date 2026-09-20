@@ -20,7 +20,7 @@ def _pick(fieldmap, aliases):
 
 
 def _sniff_delim(lines):
-    """Delimiter comma/semicolon/tab; comma."""
+    """Sniff delimiter default comma."""
     sample = "\n".join(lines[:5])
     try:
         return csv.Sniffer().sniff(sample, delimiters=";,\t").delimiter
@@ -31,7 +31,7 @@ def _sniff_delim(lines):
 
 
 def parse_cmm_csv(text):
-    """Parse CMM CSV -> (records, errors); record {bubble,value,gage|None,line}, error {line,reason}."""
+    """Parse CMM CSV to records and errors."""
     records, errors = [], []
     if isinstance(text, str):
         lines = text.splitlines()
@@ -79,7 +79,7 @@ def _base(bubble):
 
 
 def match_to_ledger(records, ledger):
-    """Match records to ledger by bubble base -> {matched:[(idx,record)], unmatched, duplicates, no_base}."""
+    """Match records to ledger by bubble base."""
     by_base = {}
     for idx, row in enumerate(ledger):
         rb = _base(row.get("bubble"))

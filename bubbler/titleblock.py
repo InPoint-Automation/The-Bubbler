@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Title-block label->value parser. Pure logic, displayed coords. No app state.
+# Title-block label->value parser.
 
 import re
 
@@ -30,7 +30,7 @@ def _norm(s):
 
 
 def _match_label(tokens):
-    """Longest known label (1-3 tokens) starting here -> (cell, span) or None."""
+    """Longest known label 1-3 tokens starting here."""
     for span in (3, 2, 1):
         if span > len(tokens):
             continue
@@ -43,7 +43,7 @@ def _match_label(tokens):
 
 
 def parse_titleblock(words):
-    """Word tuples (x0,y0,x1,y1,text,...) displayed coords -> {cell: value}; value right of label else row below, unmatched omitted."""
+    """Word tuples in displayed coords to {cell: value}."""
     ws = [w for w in words if str(w[4]).strip()]
     n = len(ws)
     label_idx = set()

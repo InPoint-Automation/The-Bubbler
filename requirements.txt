@@ -4,18 +4,22 @@ PyMuPDF==1.27.2.3
 openpyxl==3.1.5
 PySide6==6.10.2
 
-numpy>=1.26,<3
+numpy>=1.26,<2.4
 rapidocr-onnxruntime>=1.2.8,<2   # OCR 1
-onnxruntime-gpu>=1.17            # CUDA EP
+opencv-python>=4.8
+pyclipper>=1.3
+Shapely>=2.0
+onnxruntime-gpu[cuda,cudnn]>=1.27,<1.28           # CUDA EP
 paddleocr>=3.2                   # PP-OCRv4 + VL
 paddlepaddle-gpu>=2.6.2.0
 tokenizers>=0.15                 # Florence-2
 
 pillow
-ultralytics                      # train
+ultralytics>=8.4.156             # train
 onnx
 onnxsim
 torch
 augraphy
 
 pytest
+pytest-xdist

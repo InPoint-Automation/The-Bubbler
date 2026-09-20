@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Multi-page thumbnail navigator. Dockable, click to jump.
+# Multi-page thumbnail navigator
 
 import fitz
 
@@ -42,6 +42,7 @@ class NavMixin:
         if i != self.page_i:
             self.page_i = i
             self.render()
+            self._sync_gentol()      # gentol per page
         self._nav_highlight()
 
     def toggle_nav(self):

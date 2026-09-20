@@ -1,9 +1,10 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# System-python venv runs onnxruntime-gpu in a subprocess
+# System-python venv runs onnxruntime-gpu in subprocess
 
 import os
+import re as _re
 import shutil
 import subprocess
 import sys
@@ -13,8 +14,9 @@ from .gpu_worker import send as _send, recv as _recv
 
 _PRISTINE_ENV = dict(os.environ)
 
-GPU_PIN = "onnxruntime-gpu==1.26.0"
-MIN_DRIVER = 525
+# tracks requirements.txt:37
+GPU_PIN = "onnxruntime-gpu>=1.27,<1.28"
+MIN_DRIVER = 580                     # CUDA 13 floor
 
 
 def is_linux():
@@ -81,14 +83,42 @@ def has_system_cuda():
     return bool(ctypes.util.find_library("cudart"))
 
 
+def driver_version():
+    """NVIDIA driver major version or None"""
+    try:
+        with open("/proc/driver/nvidia/version", encoding="utf-8",
+                  errors="replace") as fh:
+            txt = fh.read()
+    except OSError:
+        return None
+    m = _re.search(r"Kernel Module\s+(\d+)\.", txt)
+    return int(m.group(1)) if m else None
+
+
+def driver_ok():
+    """UNKNOWN driver passes"""
+    ver = driver_version()
+    if ver is None:
+        return True, ""
+    if ver < MIN_DRIVER:
+        return False, ("NVIDIA driver %d is too old for the GPU pack "
+                       "(needs %d or newer); the CUDA provider would not "
+                       "load, so this would download ~2 GB for nothing"
+                       % (ver, MIN_DRIVER))
+    return True, ""
+
+
 def is_installed():
     return os.path.exists(venv_python()) and worker_script() is not None
 
 
 def install(want_cuda_wheels=True, on_line=None):
-    """Build venv, pip-install onnxruntime-gpu"""
+    """Build venv and install onnxruntime-gpu"""
     if not is_linux():
         return False, "GPU pack is Linux only"
+    ok, why = driver_ok()
+    if not ok:
+        return False, why
     py = system_python()
     if not py:
         return False, "no system python3 (install python3 + python3-venv)"
@@ -112,8 +142,8 @@ def install(want_cuda_wheels=True, on_line=None):
             return False, "venv failed (need the python3-venv package)"
     vpy = venv_python()
     run([vpy, "-m", "pip", "install", "--upgrade", "pip"])
-    pkg = ("onnxruntime-gpu[cuda,cudnn]==1.26.0" if want_cuda_wheels
-           else GPU_PIN)
+    pkg = (GPU_PIN.replace("onnxruntime-gpu", "onnxruntime-gpu[cuda,cudnn]")
+           if want_cuda_wheels else GPU_PIN)
     if run([vpy, "-m", "pip", "install", "numpy", pkg]) != 0:
         return False, "onnxruntime-gpu install failed"
     return True, "installed"

@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Lucide SVGs -> recolored QIcons. Ribbon flat-button factory.
+# Recolored Lucide QIcons and ribbon buttons.
 
 import os
 import sys
@@ -191,7 +191,7 @@ def icon_button(name, callback=None, tip="", label=None, color=None,
         fm = b.fontMetrics()
         texts = [label] + [translate(label, lg)
                            for lg in available_langs() if lg != "en"]
-        need = max(fm.horizontalAdvance(t) for t in texts) + 12
+        need = max(fm.horizontalAdvance(t) for t in texts) + 8
         b.setMinimumWidth(max(size + 8, need))
     else:
         b.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -205,7 +205,7 @@ def icon_button(name, callback=None, tip="", label=None, color=None,
 
 
 def menu_button(name, tip="", label=None, items=(), color=None, size=22):
-    """Flat tool button that pops a menu. items: [(icon, text, callback)]."""
+    """Flat tool button popping menu of (icon, text, callback) items."""
     from PySide6.QtWidgets import QMenu
     size = max(1, int(round(size * UI_SCALE)))
     b = QToolButton()
@@ -225,7 +225,7 @@ def menu_button(name, tip="", label=None, items=(), color=None, size=22):
         fm = b.fontMetrics()
         texts = [label] + [translate(label, lg)
                            for lg in available_langs() if lg != "en"]
-        need = max(fm.horizontalAdvance(t) for t in texts) + 24
+        need = max(fm.horizontalAdvance(t) for t in texts) + 20
         b.setMinimumWidth(max(size + 8, need))
     else:
         b.setToolButtonStyle(Qt.ToolButtonIconOnly)

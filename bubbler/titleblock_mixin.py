@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Title-block region read via bottom-right heuristic.
+# Title-block autofill via bottom-right heuristic.
 
 from .i18n import tr
 from .titleblock import parse_titleblock

@@ -1,18 +1,24 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Reader-correction store. Local-only crop + label pairs for retraining.
+# Reader-correction crop plus label store
 
 import os
 import json
 
-SCHEMA = 1
+# adds predicted_region_class hard negative
+SCHEMA = 2
 
+# ledger type -> region class
 _TYPE_TO_REGION = {
     "GD&T": "feature_control_frame",
     "finish": "surface_finish",
-    "hole": "hole_note",
-    "thru": "hole_note",
+    "hole": "hole",
+    "thru": "hole",
+    "thread": "hole",
+    "depth": "hole",
+    "slot": "slot",
+    "position": "feature_control_frame",
 }
 _LABEL_GLYPHS = (u"Ø", "R", u"⌖", u"▱", u"◯", u"⌭", u"⟂", u"∥", u"∠",
                  u"◎", u"⌒", u"⌓", u"⌰", u"↗", "Ra")
@@ -23,7 +29,12 @@ def region_class_for(rows):
         t = r.get("type")
         if t in _TYPE_TO_REGION:
             return _TYPE_TO_REGION[t]
-    return "dim_tol"
+    return "dim_length"
+
+
+def predicted_class(reader):
+    """Region class model read implied so correction carries wrong answer too (F6)."""
+    return region_class_for([reader]) if reader else None
 
 
 def symbols_for(rows):
@@ -41,6 +52,38 @@ def corrections_dir(cfg):
     if d:
         return os.path.expanduser(d)
     return os.path.join(os.path.expanduser("~"), ".bubbler", "corrections")
+
+
+# F9 acceptance positive label
+ACC_SCHEMA = 1
+_ACC_RECORD_KEYS = ("type", "feature", "nominal", "tol_sym", "tol_max",
+                    "tol_min", "datums", "bubble", "tier")
+
+
+def acceptances_dir(cfg):
+    d = ((cfg or {}).get("acceptances_dir") or "").strip()
+    if d:
+        return os.path.expanduser(d)
+    return os.path.join(os.path.expanduser("~"), ".bubbler", "acceptances")
+
+
+def acceptance_rec(row, page, box, crop_w, crop_h, drawing_tag, version=None):
+    """Acceptance record from shipped ledger row."""
+    x0, y0, x1, y1 = box
+    return {
+        "schema": ACC_SCHEMA,
+        "version": version,
+        "page": page,
+        "rect": [x0, y0, x1, y1],
+        "crop": {"w": crop_w, "h": crop_h, "dpi": 300},
+        "labels": {"region_class": region_class_for([row]),
+                   "symbols": symbols_for([row])},
+        "record": {k: row.get(k) for k in _ACC_RECORD_KEYS},
+        "accepted": True,
+        # F9 edited weaker positive
+        "edited": bool(row.get("edited")),
+        "drawing": drawing_tag,
+    }
 
 
 def write_correction(dirpath, rec, png_bytes, stamp):

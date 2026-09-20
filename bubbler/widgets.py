@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Canvas + measure-input widgets. Views forward input to `self.app`.
+# Canvas and measure-input widgets.
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QColor
@@ -29,7 +29,7 @@ def set_combo_key(combo, key):
 
 
 class PdfView(QGraphicsView):
-    """Page pixmap + balloon overlay. Forwards input to app."""
+    """Page pixmap and balloon overlay forwarding input to app."""
 
     def __init__(self, scene, app):
         super().__init__(scene)
@@ -47,6 +47,13 @@ class PdfView(QGraphicsView):
     def scene_pt(self, ev):
         return self.mapToScene(ev.position().toPoint())
 
+    def _guard(self, where, fn, *a):
+        """Run an app callback, surfacing what Qt would swallow from a slot."""
+        try:
+            fn(*a)
+        except Exception:
+            self.app._report_input_error(where)
+
     def drawForeground(self, painter, rect):
         self.app.paint_overlay(painter)
 
@@ -57,14 +64,15 @@ class PdfView(QGraphicsView):
         sp = self.scene_pt(e)
         if btn == BUTTON_LEFT:
             if (mods & Qt.AltModifier) and (mods & Qt.ShiftModifier):
-                self.app.on_alt_shift_click(sp)
+                self._guard("alt_shift_click", self.app.on_alt_shift_click, sp)
             elif mods & Qt.ShiftModifier:
-                self.app.on_shift_click(sp, e.globalPosition())
+                self._guard("shift_click", self.app.on_shift_click,
+                            sp, e.globalPosition())
             elif mods & Qt.ControlModifier:
-                self.app.on_ctrl_click(sp)
+                self._guard("ctrl_click", self.app.on_ctrl_click, sp)
             else:
-                self.app.on_press(sp, e.position(),
-                                  predict=not bool(mods & Qt.AltModifier))
+                self._guard("press", self.app.on_press, sp, e.position(),
+                            not bool(mods & Qt.AltModifier))
             return
         if btn in (Qt.MiddleButton, Qt.RightButton):
             if btn == Qt.RightButton and self.app.on_right_press(
@@ -88,9 +96,9 @@ class PdfView(QGraphicsView):
         if btns & BUTTON_LEFT:
             sp = self.scene_pt(e)
             if self.app._capturing:
-                self.app.on_capture_drag(sp)
+                self._guard("capture_drag", self.app.on_capture_drag, sp)
             else:
-                self.app.on_motion(sp, e.position())
+                self._guard("motion", self.app.on_motion, sp, e.position())
             return
         super().mouseMoveEvent(e)
 
@@ -102,9 +110,10 @@ class PdfView(QGraphicsView):
         if e.button() == BUTTON_LEFT:
             sp = self.scene_pt(e)
             if self.app._capturing:
-                self.app.on_capture_release(sp, e.globalPosition())
+                self._guard("capture_release", self.app.on_capture_release,
+                            sp, e.globalPosition())
             else:
-                self.app.on_release(sp, e.position())
+                self._guard("release", self.app.on_release, sp, e.position())
             return
         super().mouseReleaseEvent(e)
 
@@ -125,7 +134,7 @@ class PdfView(QGraphicsView):
 
 
 class MeasureEdit(QLineEdit):
-    """Measure-walk input. Walk navigation keys."""
+    """Measure-walk input with walk navigation keys."""
 
     def __init__(self, app):
         super().__init__()

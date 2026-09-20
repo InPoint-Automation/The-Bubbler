@@ -94,7 +94,7 @@ def _to_points(box):
 
 
 def _first(*vals):
-    # avoids numpy truthiness of `a or b`
+    # dodge numpy `a or b` truthiness
     for v in vals:
         if v is not None:
             return v

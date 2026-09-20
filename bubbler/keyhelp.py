@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# F1 help: keybinding data + HTML renderer.
+# F1 help keybindings plus HTML renderer.
 
 from .i18n import tr
 
@@ -53,6 +53,7 @@ def _key_groups():
             ("A", tr('Add tool')),
             ("R", tr('Align row or column')),
             ("H", tr('Distribute H')),
+            ("L", tr('Leader on/off')),
             ("Del", tr('Delete')),
             ("Esc", tr('Clear selection')),
         ]),
@@ -69,18 +70,19 @@ def _key_groups():
 def _key_notes():
     return [
         (tr('Leaders'), tr(
-            "The dialog's 'Leader line' box decides whether a balloon gets a "
-            "line (default = ribbon state). Editing a bubble can add/remove "
-            "its leader; turning it on offsets the numeral automatically.")),
+            "The dialog's 'Leader line' box sets whether a balloon gets a "
+            "line (default = ribbon state). Editing a bubble adds or removes "
+            "its leader; L on the select-tool hotbar flips it for every "
+            "selected bubble. On offsets the numeral automatically; off "
+            "parks it on the callout.")),
         (tr('Bubble offset'), tr(
             "Captured and scanned bubbles step off the callout box in the "
-            "preferred direction (arrow keys), dodging text, fills, thick "
-            "edges and other bubbles. Thin leader / dimension lines are not "
-            "avoided.")),
+            "arrow-key direction, dodging text, fills, thick edges and other "
+            "bubbles. Thin leader and dimension lines are not avoided.")),
         (tr('Capture'), tr(
             "Click or drag a callout to read it (OCR/VLM) and bubble it; "
-            "Alt+click drops a plain bubble with no read. Bare numbers always "
-            "bubble; they take the ribbon's sticky type and the title block's "
+            "Alt+click drops a plain bubble, no read. Bare numbers always "
+            "bubble, taking the ribbon's sticky type and the title block's "
             "general tolerance. With the header editor open, a drag fills the "
             "focused field instead.")),
     ]

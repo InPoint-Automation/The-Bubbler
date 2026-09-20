@@ -1,26 +1,38 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Scan-review dialog. Edit hits, anchor, append balloons.
+# Scan review dialog, edit hits, append balloons.
 
 import math
 
 from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QComboBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QInputDialog, QMessageBox)
 
-from .common import TYPES, dp_tol, tier_for_type
-from .config import units_of
+from .common import TYPES, tier_for_type
 from .scanlib import (scan_to_row, expand_hole_row, denorm_candidates,
-                      GAGES, repeat_count)
-from .iso2768 import iso2768_general_tol
+                      GAGES, repeat_count, general_tol, gentol_callout,
+                      scan_ticked, scan_preset_name, scan_presets)
 from .i18n import tr, retranslate
 
 
+def insert_general_tol(base, h, cfg, iso_on, icls="m", session=None,
+                       gtols=None):
+    """General tolerance for scan row with none yet."""
+    if base.get("type") != "dim" or base.get("nominal") is None:
+        return None
+    if (base.get("tol_sym") is not None or base.get("tol_max") is not None
+            or base.get("tol_min") is not None):
+        return None
+    return general_tol(gentol_callout(h, base), gtols, cfg, session,
+                       icls=icls, iso_on=iso_on).value
+
+
 def clockwise_order(items):
-    """Sort accepted rows in place into clockwise balloon-numbering order."""
+    """Sort accepted rows in-place into clockwise numbering order."""
     by_pg = {}
     for it in items:
         by_pg.setdefault(it["pg"], []).append(it)
@@ -34,16 +46,36 @@ def clockwise_order(items):
     items.sort(key=lambda it: (it["pg"], it["_cw"]))
 
 
+# FCF_SUSPECT: frame reads reader unsure of
+FCF_SUSPECT = ("unboxed", "partial", "datum_lost", "zone_suspect",
+               "symbol_mixed", "bare_mod")
+
+
+def _starts_unticked(h):
+    """Doubtful hit asked not assumed."""
+    if any(c in FCF_SUSPECT for c in (h.get("fcf_flags") or ())):
+        return True
+    return h.get("xcheck") == "disagree"
+
+
 class ScanReview(QDialog):
-    """Review scan hits before committing them to the ledger."""
+    """Review scan hits before committing to ledger."""
 
     COLS = ("use", "pg", "exp", "type", "value", "tol", "gage")
     HEADS = ("use?", "pg", "n×", "type", tr('value'), "tol", "gage")
+
+    def _sheet_header(self):
+        """Title-block cells or {} when workbook unreadable."""
+        try:
+            return self.app.writer.get_header() or {}
+        except Exception:
+            return {}
 
     def __init__(self, app, found, gtols, all_pages):
         super().__init__(app)
         self.app = app
         self.gtols = gtols
+        app.adopt_iso_class(gtols)      # drawing beats ribbon
         self.setWindowTitle(
             tr('Scan review') + " - "
             + (tr('all pages') if all_pages
@@ -60,11 +92,19 @@ class ScanReview(QDialog):
         self.table.viewport().installEventFilter(self)
         lay.addWidget(self.table)
 
+        # starting tick scope question
+        hdr = self._sheet_header()
+        ses = getattr(app, "session", None)
+        self.preset = scan_preset_name(app.cfg, ses, hdr)
         self.rows = []
+        self._touched = set()
+        # proposal-edited hits by id
+        self._edited_hits = set()
         for pg, h in found:
             rw = self._to_row(h, pg)
-            use = h.get("sb") not in ("BASIC", "REF", "BARE") or \
-                (h.get("sb") == "BARE" and rw.get("tol_sym") is not None)
+            use = scan_ticked(h, rw, app.cfg, ses, hdr)
+            if _starts_unticked(h):
+                use = False        # asked not assumed
             self.rows.append([use, h, rw, pg, {}, self._nx(h) > 1])
 
         self.table.setRowCount(len(self.rows))
@@ -73,8 +113,23 @@ class ScanReview(QDialog):
 
         self.table.cellDoubleClicked.connect(self._double)
         self.table.itemEntered.connect(self._hover)
-        # connect after fill, else it fires
+        # connect after fill
         self.table.itemChanged.connect(self._item_changed)
+
+        pw = QWidget()
+        pl = QHBoxLayout(pw)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.addWidget(QLabel(tr('Inspection')))
+        self.cb_preset = QComboBox()
+        self.cb_preset.addItems(sorted(scan_presets(app.cfg)))
+        self.cb_preset.setCurrentText(self.preset)
+        self.cb_preset.setProperty("i18n_skip", True)
+        self.cb_preset.currentTextChanged.connect(self._preset_changed)
+        pl.addWidget(self.cb_preset)
+        pl.addWidget(QLabel(
+            tr('- decides what starts ticked. Kept for this drawing.')))
+        pl.addStretch(1)
+        lay.addWidget(pw)
 
         info = QLabel("Tick 'use?' to accept a row - tick 'n×' to expand "
                       "repeats - double-click type/value/tol/gage to edit - "
@@ -96,7 +151,8 @@ class ScanReview(QDialog):
         b_bare = QPushButton(tr('Toggle plain dims'))
         b_bare.clicked.connect(self._toggle_bare)
         b_bulk = QPushButton(tr('Bulk edit checked'))
-        b_bulk.setToolTip("Set type / gage / tol on every checked row at once")
+        b_bulk.setToolTip(
+            tr('Set type, gage and tolerance on all checked rows'))
         b_bulk.clicked.connect(self._bulk_edit)
         b_cancel = QPushButton(tr('Cancel'))
         b_cancel.clicked.connect(self.reject)
@@ -141,6 +197,7 @@ class ScanReview(QDialog):
         self.table.blockSignals(True)
         use, h, _rw, _pg, _ov, expand = self.rows[i]
         nx = self._nx(h)
+        bad = [c for c in (h.get("fcf_flags") or ()) if c in FCF_SUSPECT]
         for c, val in enumerate(self._row_values(i)):
             it = QTableWidgetItem(str(val))
             it.setTextAlignment(Qt.AlignCenter)
@@ -151,6 +208,21 @@ class ScanReview(QDialog):
             elif c == 2 and nx > 1:
                 it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
                 it.setCheckState(Qt.Checked if expand else Qt.Unchecked)
+            if c == self.COLS.index("value"):
+                xchk = h.get("xcheck")
+                if bad:
+                    # doubt outlives checkbox
+                    it.setBackground(QColor("#fff3cd"))
+                    it.setToolTip(tr('Uncertain frame read') + ": "
+                                  + ", ".join(bad))
+                elif xchk == "disagree":
+                    # VLM disagrees
+                    it.setBackground(QColor("#fff3cd"))
+                    it.setToolTip(tr('VLM read %s -- disagrees with reader')
+                                  % (h.get("xcheck_alt") or "?"))
+                elif xchk == "agree":
+                    it.setBackground(QColor("#e4efe4"))
+                    it.setToolTip(tr('Reader and VLM agree'))
             self.table.setItem(i, c, it)
         self.table.blockSignals(False)
 
@@ -160,8 +232,28 @@ class ScanReview(QDialog):
             return
         if c == 0:
             self.rows[i][0] = (it.checkState() == Qt.Checked)
+            self._touched.add(i)         # hand tick outranks preset
         elif c == 2 and self._nx(self.rows[i][1]) > 1:
             self.rows[i][5] = (it.checkState() == Qt.Checked)
+
+    def _preset_changed(self, name):
+        """Re-tick to another inspection without undoing hand ticks."""
+        if not name or name == self.preset:
+            return
+        self.preset = name
+        ses = getattr(self.app, "session", None)
+        if isinstance(ses, dict):
+            ses["scan_preset"] = name
+        hdr = self._sheet_header()
+        for i, row in enumerate(self.rows):
+            if i in self._touched:
+                continue                 # already answered
+            use, h, rw = row[0], row[1], row[2]
+            use = scan_ticked(h, rw, self.app.cfg, {"scan_preset": name}, hdr)
+            if _starts_unticked(h):
+                use = False              # doubt outranks preset
+            row[0] = use
+            self._set_check(i, 0, use)
 
     def _set_check(self, i, col, on):
         it = self.table.item(i, col)
@@ -251,6 +343,8 @@ class ScanReview(QDialog):
                 ov["gage"] = new_g
             if new_tol:
                 h["t"] = new_tol
+            if new_t is not None or (new_g and new_g != KEEP) or new_tol:
+                self._edited_hits.add(id(h))
             self._rebuild(i)
 
     def keyPressEvent(self, e):
@@ -279,6 +373,7 @@ class ScanReview(QDialog):
             if ok and val:
                 ov["type"] = val
                 rw["type"] = val
+                self._edited_hits.add(id(h))
                 self._fill_row(i)
         elif col == "gage":
             cur = rw["gage"]
@@ -288,17 +383,20 @@ class ScanReview(QDialog):
             if ok:
                 ov["gage"] = val
                 rw["gage"] = val
+                self._edited_hits.add(id(h))
                 self._fill_row(i)
         elif col == "tol":
             val, ok = QInputDialog.getText(self, "tol", "tol",
                                            text=h.get("t") or "")
             if ok:
                 h["t"] = val.strip() or None
+                self._edited_hits.add(id(h))
                 self._rebuild(i)
         else:
             val, ok = QInputDialog.getText(self, "value", "value", text=h["v"])
             if ok and val.strip():
                 h["v"] = val.strip()
+                self._edited_hits.add(id(h))
                 self.rows[i][5] = self._nx(h) > 1
                 self._rebuild(i)
 
@@ -350,20 +448,19 @@ class ScanReview(QDialog):
 
         clockwise_order(items)
 
-        group_uid = {}
         group_anchor = {}
         group_qty = {}
         for it in items:
             cg = it["h"].get("cg")
             it["_key"] = (it["pg"], cg) if cg is not None \
                 else ("_", id(it["h"]))
-            if it["_key"] not in group_uid:
-                group_uid[it["_key"]] = app.store.new_uid()
+            if it["_key"] not in group_anchor:
                 group_anchor[it["_key"]] = it
             # nX anywhere in block
             q = repeat_count(it["rw"].get("feature"))
             group_qty[it["_key"]] = max(group_qty.get(it["_key"], 1), q)
 
+        pending = []                         # ledger order
         for it in items:
             h, rw, pg, expand = it["h"], it["rw"], it["pg"], it["expand"]
             anchor = group_anchor[it["_key"]]
@@ -371,48 +468,58 @@ class ScanReview(QDialog):
             if not snapped:
                 app.snapshot()
                 snapped = True
-            if app.use_leaders() or rect is not None:
-                bx, by = app.auto_offset(ax, ay, page_i=pg, rect=rect)
-            else:
-                bx, by = ax, ay
+            bx, by, lead = app.place_bubble(
+                ax, ay, page_i=pg, rect=rect,
+                tier=tier_for_type(rw.get("type"), app.cfg,
+                                   rw.get("tier", "")))
             base = dict(rw)
-            base.setdefault("leader", app.use_leaders())
-            if (units_of(app.cfg) == "iso_mm" and app.last.get("iso_on") and
-                    base.get("type") == "dim" and
-                    base.get("tol_sym") is None and
-                    base.get("tol_max") is None and
-                    base.get("tol_min") is None and
-                    base.get("nominal") is not None):
-                t2768 = iso2768_general_tol(base["nominal"],
-                                            app.last.get("icls", "m"),
-                                            feature=base.get("feature"))
-                if t2768 is None:
-                    t2768 = dp_tol(base["nominal"], app.cfg)
-                if t2768 is not None:
-                    base["tol_sym"] = t2768
-                    base["gage"] = app.suggest(base)
-            uid = group_uid[it["_key"]]
+            base["leader"] = lead            # flag matches offset
+            t2768 = insert_general_tol(base, h, app.cfg,
+                                       app.last.get("iso_on"),
+                                       app.last.get("icls", "m"),
+                                       session=app.drawing,
+                                       gtols=self.gtols.get(pg) or {})
+            if t2768 is not None:
+                base["tol_sym"] = t2768
+                base["gage"] = app.suggest(base)
             gq = group_qty.get(it["_key"], 1)
             for d in expand_hole_row(base, app.cfg, repeat=expand):
                 if expand and gq > 1:
                     d["qty"] = gq
                 if not d.get("gage"):
                     d["gage"] = app.suggest(d)
-                d.setdefault("leader", app.use_leaders())
+                d["leader"] = lead
                 d["tier"] = tier_for_type(d.get("type"), app.cfg,
                                           d.get("tier", ""))
-                d.update({"uid": uid, "bubble": "", "page": pg,
+                d.update({"bubble": "", "page": pg,
                           "x": ax, "y": ay, "bx": bx, "by": by,
-                          "sheet_row": None})
-                app.ledger.append(d)
-                nrows += 1
+                          "sheet_row": None,
+                          # F9: scan rect + edited flag
+                          "rect": list(it["rect"]) if it.get("rect") else None,
+                          "edited": id(h) in self._edited_hits})
+                pending.append((d, it["_key"]))
             added += 1
+
+        # one uid per measurable row
+        counts = {}
+        for _d, key in pending:
+            counts[key] = counts.get(key, 0) + 1
+        gid_of = {}
+        for d, key in pending:
+            d["uid"] = app.store.new_uid()
+            if counts[key] > 1:
+                gid_of.setdefault(key, d["uid"])   # first uid = group id
+                d["bgroup"] = gid_of[key]
+            app.ledger.append(d)
+            nrows += 1
         app.store.renumber()
-        app._save_session()
+        sess_ok = app._save_session()
         app.refresh_panel()
         app.render()
         self.accept()
-        msg = "added %d balloon(s), %d row(s)" % (added, nrows)
+        msg = tr("added %d balloon(s), %d row(s)") % (added, nrows)
+        if not sess_ok:
+            msg += "; " + tr("NOT saved to disk")
         if unanchored:
             msg += "; %d unanchored (left margin) - drag into place" \
                    % unanchored

@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Pointer input mixin. Zoom, drag, selection.
+# Pointer input mixin for zoom drag select
 
 from PySide6.QtCore import Qt
 
