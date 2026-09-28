@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Inspection runs: issue, close out, start next.
+# Inspection runs: report id, close out, start next.
 
 import os
 
@@ -12,13 +12,13 @@ from .store import RunClosed, SessionReadOnly
 
 
 class RunsMixin:
-    """Issue writes report only close-out seals run."""
 
-    # run-scoped cells (W27/W22)
-    _RUN_HEADER_CELLS = (("H5", "serial"), ("B6", "inspector"), ("E6", "date"))
+    _RUN_HEADER_CELLS = (("H5", "serial"), ("B6", "inspector"), ("E6", "date"),
+                         ("H6", "inspection"))
+    # blank run keeps block's
+    _RUN_INHERITS = ("inspection",)
 
     def _stamp_run_identity(self):
-        """Copy run-scoped title-block cells onto active run."""
         run = self.store.run()
         if run is None or run.get("closed"):
             return
@@ -27,16 +27,27 @@ class RunsMixin:
             if v:
                 run[field] = v
 
+    def _default_inspector(self):
+        """Blank header inspector takes Settings default."""
+        run = self.store.run()
+        who = str(self.cfg.get("fai_inspector") or "").strip()
+        if not who or run is None or run.get("closed"):
+            return
+        if str(self.store.header.get("B6") or "").strip():
+            return
+        run["inspector"] = who
+        self.store.header["B6"] = who
+
     def _sync_header_from_run(self):
-        """Reflect active run identity back into title block."""
         run = self.store.run() or {}
         for cell, field in self._RUN_HEADER_CELLS:
-            self.store.header[cell] = str(run.get(field) or "")
+            v = str(run.get(field) or "")
+            if not v and field in self._RUN_INHERITS:
+                continue
+            self.store.header[cell] = v
 
-    # ------------------------------------------------------------ helpers
 
     def _run_part_rev(self):
-        """Part number and revision for report id off sheet."""
         part = rev = ""
         try:
             hdr = self.writer.get_header()
@@ -55,42 +66,28 @@ class RunsMixin:
             return True
         return False
 
-    # ------------------------------------------------------------- issue
 
-    def issue_report(self, close_out=False):
-        """Stamp report id and write documents run still editable."""
-        if self._run_blocked():
-            return ""
-        if self.store.run_closed():
-            self._show_session_lock()
+    def _mint_report_id(self):
+        """Follows part/rev until close-out. Never raises."""
+        if self.store.read_only or self.store.run_closed():
             return ""
         part, rev = self._run_part_rev()
         try:
-            rid = self.store.issue_run(part=part, rev=rev)
+            return self.store.mint_report_id(part=part, rev=rev)
         except (RunClosed, KeyError):
-            self._show_session_lock()
             return ""
-        self.save()                       # PDF + xlsx + session
-        self.set_status(tr('report %s issued') % rid, icon="check")
-        if close_out:
-            self.close_out()              # sets own status
-        return rid
 
-    def issue_and_close(self):
-        """Common case inspection finished."""
-        return self.issue_report(close_out=True)
-
-    # --------------------------------------------------------- close out
 
     def _close_out_box(self):
         """Confirmation box split out for screenshot."""
+        self._mint_report_id()
         run = self.store.run() or {}
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle(tr('Close out inspection'))
         box.setText(tr('Close out this run?'))
         rid = str(run.get("report_id") or "")
-        what = (tr('Report %s') % rid) if rid else tr('No report issued yet')
+        what = (tr('Report %s') % rid) if rid else tr('No report ID yet')
         box.setInformativeText(
             what + "\n\n"
             + tr('Closing out locks this run. Its measured values, '
@@ -106,7 +103,6 @@ class RunsMixin:
         return box
 
     def close_out(self):
-        """Confirm then seal run returns true when sealed."""
         if self._run_blocked():
             return False
         if self.store.run_closed():
@@ -116,8 +112,11 @@ class RunsMixin:
         box.exec()
         if box.clickedButton() is not box.button_close:
             return False
-        # write docs before sealing
-        if not self.docs_written() and not self.save():
+        # docs before seal, again if id moved
+        run = self.store.run() or {}
+        moved = ("docs_id" in run
+                 and run.get("docs_id") != run.get("report_id"))
+        if (moved or not self.docs_written()) and not self.save():
             QMessageBox.warning(
                 self, tr('Not closed out'),
                 tr('This run was NOT closed out: its ballooned PDF and '
@@ -127,14 +126,16 @@ class RunsMixin:
             self.set_status(tr('not closed out: documents not written'),
                             icon="warn")
             return False
+        self._archive_run_docs(self._saved_output_pdf())
         return self._close_out_now()
 
     def _close_out_now(self):
-        """Seal and persist run."""
+        self._collect_acceptances(list(self.ledger))
         try:
             self.store.close_run()
         except (RunClosed, KeyError):
             return False
+        self._undo, self._redo = [], []    # nothing undoes a seal
         ok = self._save_session()
         self._apply_lock_chrome()
         self.refresh_panel()
@@ -142,20 +143,26 @@ class RunsMixin:
             self.set_status(tr('inspection closed out'), icon="check")
         return ok
 
-    # ----------------------------------------------------------- new run
 
     def start_new_run(self):
-        """Start next run after closed one."""
         if self._run_blocked():
             return ""
+        prev = dict(self.store.run() or {})
+        kind = (prev.get("inspection")
+                or str(self.store.header.get("H6") or ""))
         try:
             rid = self.store.add_run()
         except SessionReadOnly:
             self._show_session_lock()
             return ""
+        if kind:
+            self.store.run()["inspection"] = kind
         self._sync_header_from_run()      # clear title block
+        self._default_inspector()
+        # undo is per run
+        self._undo, self._redo = [], []
         self._session_ro_warned = False
-        self._run_stale_asked = True      # fresh run never stale
+        self._run_stale_asked = True
         self._save_session()
         self._apply_lock_chrome()
         self.refresh_panel()
@@ -163,14 +170,12 @@ class RunsMixin:
         self.set_status(tr('new inspection run started'), icon="check")
         return rid
 
-    # ------------------------------------------------------- switch runs
 
     def _run_label(self, run, active):
-        """One line describing run for switch picker."""
         bits = [str(run.get("id") or "")]
         ident = str(run.get("serial") or "").strip()
         if ident:
-            bits.append(ident)            # part inspected (W27)
+            bits.append(ident)
         if run.get("report_id"):
             bits.append(tr('report %s') % run["report_id"])
         if run.get("closed"):
@@ -187,7 +192,6 @@ class RunsMixin:
         return "  -  ".join(bits)
 
     def switch_run(self):
-        """Pick existing run and make active way BACK (O1)."""
         from PySide6.QtWidgets import QInputDialog
         if self._run_blocked():
             return ""
@@ -217,9 +221,12 @@ class RunsMixin:
             self.store.set_active_run(rid)
         except KeyError:
             return ""
-        self._sync_header_from_run()      # follows active run
+        self._sync_header_from_run()
+        self._default_inspector()
+        # undo is per run
+        self._undo, self._redo = [], []
         self._session_ro_warned = False
-        self._run_stale_asked = True      # switch never stale
+        self._run_stale_asked = True
         # sealed target refuses save
         if not self.store.run_closed():
             self._save_session()
@@ -229,7 +236,6 @@ class RunsMixin:
         self.set_status(tr('switched to run %s') % rid, icon="check")
         return rid
 
-    # --------------------------------------------------------- staleness
 
     def _stale_box(self, days):
         """Question box split out for screenshot."""
@@ -251,7 +257,6 @@ class RunsMixin:
         return box
 
     def _run_stale_check(self):
-        """Ask once on open when active run went cold."""
         if getattr(self, "_run_stale_asked", False):
             return
         if self.store.read_only or self.store.run_closed():
@@ -276,4 +281,4 @@ class RunsMixin:
         if box.clickedButton() is getattr(box, "button_new", None):
             self.start_new_run()
         elif box.clickedButton() is getattr(box, "button_keep", None):
-            self._save_session()          # touched moves to now
+            self._save_session()

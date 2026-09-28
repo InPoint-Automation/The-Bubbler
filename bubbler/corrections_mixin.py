@@ -94,7 +94,7 @@ class CorrectionsMixin:
             dlg.exec()
             rows = dlg.result_rows
         finally:
-            dlg.deleteLater()        # drop C++ object too
+            dlg.deleteLater()
         if not rows:
             return
         x0, y0, x1, y1 = rect
@@ -138,7 +138,7 @@ class CorrectionsMixin:
             except (TypeError, ValueError):
                 prot = 0
             if prot:
-                from .scanpos import xform_rect
+                from .reader.geometry import xform_rect
                 x0, y0, x1, y1 = xform_rect(
                     page.derotation_matrix, x0, y0, x1, y1)
             s = 300.0 / 72.0
@@ -150,7 +150,7 @@ class CorrectionsMixin:
             return None, 0, 0
 
     def _collect_acceptances(self, rows):
-        """One local-only ACCEPTANCE per just-shipped bubbled row."""
+        """Edited row replaces its record, unchanged skipped."""
         if not self.cfg.get("collect_acceptances") or not rows:
             return
         try:
@@ -158,14 +158,22 @@ class CorrectionsMixin:
             tag = self._drawing_tag()
         except Exception:
             return
+        # key -> (sig, base path)
+        done = self.__dict__.setdefault("_accepted_recs", {})
+        nth = {}
         for d in rows:
-            # skip one bad crop
+            if str(d.get("bubble") or "").strip() == "":
+                continue
+            if d.get("facet") == "qty":
+                continue          # count, no callout label
+            # sub-rows share uid, key by order
+            k = nth[d.get("uid")] = nth.get(d.get("uid"), -1) + 1
+            key = (tag, d.get("uid"), k)
             try:
                 cx, cy = d.get("x"), d.get("y")
                 if cx is None or cy is None:
-                    continue                  # no anchor to crop
+                    continue
                 page = int(d.get("page", 0))
-                # scan rect else rebuilt
                 box = d.get("rect")
                 if not box:
                     # grouped x/y is centroid
@@ -173,15 +181,29 @@ class CorrectionsMixin:
                     if pre:
                         cx, cy = pre
                     box = self._capture_box(cx, cy)
-                png, cw, ch = self._region_crop_png(page, box)
-                rec = corrections.acceptance_rec(d, page, box, cw, ch, tag,
+                rec = corrections.acceptance_rec(d, page, box, 0, 0, tag,
                                                  version=common.VERSION)
+                sig = json.dumps([rec["record"], rec.get("proposal")],
+                                 sort_keys=True, default=str)
+                old = done.get(key) if d.get("uid") is not None else None
+                if old and old[0] == sig:
+                    continue
+                png, cw, ch = self._region_crop_png(page, box)
+                rec["crop"].update(w=cw, h=ch)
                 if png:
                     rec["crop_sha"] = hashlib.sha1(png).hexdigest()[:16]
-                corrections.write_correction(dirpath, rec, png,
-                                             self._corr_stamp())
+                base = corrections.write_correction(dirpath, rec, png,
+                                                    self._corr_stamp())
+                if old and old[1]:
+                    for ext in (".json", ".png"):
+                        try:
+                            os.remove(old[1] + ext)
+                        except OSError:
+                            pass
+                if d.get("uid") is not None:
+                    done[key] = (sig, base)
             except Exception:
-                continue                      # capture is best-effort
+                continue
 
     def _corr_stamp(self):
         n = getattr(self, "_corr_seq", 0) + 1
@@ -204,7 +226,7 @@ class CorrectionsMixin:
             self._corr_fill()
             return
         dlg = QDialog(self)
-        dlg.setAttribute(Qt.WA_DeleteOnClose, True)   # free on close
+        dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.setWindowTitle(tr('Review corrections'))
         lay = QVBoxLayout(dlg)
         self._corr_head = QLabel("")

@@ -38,7 +38,30 @@ def send(stream, header, blobs=()):
     stream.flush()
 
 
+def _preload_cudart():
+    """Preload wheel libcudart before ORT import. Never raises."""
+    try:
+        import ctypes
+        import glob
+        import importlib.util
+        import os
+        spec = importlib.util.find_spec("nvidia")
+        for root in (spec.submodule_search_locations or []) if spec else []:
+            for lib in sorted(glob.glob(os.path.join(root, "*", "lib",
+                                                     "libcudart.so.*"))):
+                try:
+                    ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+                    return
+                except OSError:
+                    continue
+    except Exception:
+        pass
+
+
 def main():
+    import os
+    os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")   # offline
+    _preload_cudart()
     import numpy as np
     import onnxruntime as ort
 

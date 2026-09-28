@@ -29,7 +29,6 @@ def set_combo_key(combo, key):
 
 
 class PdfView(QGraphicsView):
-    """Page pixmap and balloon overlay forwarding input to app."""
 
     def __init__(self, scene, app):
         super().__init__(scene)
@@ -43,12 +42,12 @@ class PdfView(QGraphicsView):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setBackgroundBrush(QColor("#666666"))
         self._pan_last = None
+        self._rclick = None
 
     def scene_pt(self, ev):
         return self.mapToScene(ev.position().toPoint())
 
     def _guard(self, where, fn, *a):
-        """Run an app callback, surfacing what Qt would swallow from a slot."""
         try:
             fn(*a)
         except Exception:
@@ -79,6 +78,9 @@ class PdfView(QGraphicsView):
                     sp, e.globalPosition()):
                 return
             self._pan_last = e.position()
+            # still press clicks, moving pans
+            self._rclick = ((e.position(), sp)
+                            if btn == Qt.RightButton else None)
             return
         super().mousePressEvent(e)
 
@@ -106,6 +108,13 @@ class PdfView(QGraphicsView):
         if self._pan_last is not None and e.button() in (Qt.MiddleButton,
                                                          Qt.RightButton):
             self._pan_last = None
+            rc, self._rclick = self._rclick, None
+            if rc is not None and e.button() == Qt.RightButton:
+                d = e.position() - rc[0]
+                if abs(d.x()) + abs(d.y()) < 4 and hasattr(
+                        self.app, "on_right_click"):
+                    self._guard("right_click", self.app.on_right_click,
+                                rc[1], e.globalPosition())
             return
         if e.button() == BUTTON_LEFT:
             sp = self.scene_pt(e)
@@ -134,7 +143,6 @@ class PdfView(QGraphicsView):
 
 
 class MeasureEdit(QLineEdit):
-    """Measure-walk input with walk navigation keys."""
 
     def __init__(self, app):
         super().__init__()

@@ -13,7 +13,6 @@ def _group_key(d):
 
 
 def ordered_uids(ledger):
-    """Unique uids ordered by page then first appearance."""
     first = {}
     for i, d in enumerate(ledger):
         u = d["uid"]
@@ -23,7 +22,6 @@ def ordered_uids(ledger):
 
 
 def renumber(ledger):
-    """Assign d['bubble'] strings in place. Return uid->number map."""
     first = {}
     for i, d in enumerate(ledger):
         k = _group_key(d)
@@ -41,12 +39,11 @@ def renumber(ledger):
             for i, d in enumerate(rows):
                 rows[i]["bubble"] = "%d%s" % (num[k],
                                               LETTERS[i % len(LETTERS)])
-    # uid -> group number
     return {d["uid"]: num[_group_key(d)] for d in ledger}
 
 
 def next_bubble_number(ledger, page):
-    """Next balloon number on page counted by GROUP not member uid."""
+    """Counts groups, not member uids."""
     first = {}
     for i, d in enumerate(ledger):
         k = _group_key(d)
@@ -63,31 +60,31 @@ def next_bubble_number(ledger, page):
 
 
 def set_number(ledger, uid, target_number):
-    """Move uid to target_number clamped to its page block."""
-    order = ordered_uids(ledger)
-    if uid not in order:
+    """Move whole balloon, never one bgroup member."""
+    tk = next((_group_key(d) for d in ledger if d["uid"] == uid), None)
+    if tk is None:
         return ledger
-    pages = {}
-    for d in ledger:
-        pages.setdefault(d["uid"], d.get("page", 0))
-    pg = pages[uid]
-    block = [i for i, u in enumerate(order) if pages[u] == pg]
+    first = {}
+    for i, d in enumerate(ledger):
+        first.setdefault(_group_key(d), (d.get("page", 0), i))
+    order = [k for k, _ in sorted(first.items(), key=lambda kv: kv[1])]
+    pages = {k: first[k][0] for k in order}
+    block = [i for i, k in enumerate(order) if pages[k] == pages[tk]]
     lo, hi = block[0], block[-1]
     tgt = max(lo, min(hi, int(target_number) - 1))
-    order.remove(uid)
-    order.insert(tgt, uid)
+    order.remove(tk)
+    order.insert(tgt, tk)
     rows_of = {}
     for d in ledger:
-        rows_of.setdefault(d["uid"], []).append(d)
+        rows_of.setdefault(_group_key(d), []).append(d)
     new = []
-    for u in order:
-        new.extend(rows_of[u])
+    for k in order:
+        new.extend(rows_of[k])
     renumber(new)
     return new
 
 
 def remove_bubble(ledger, uid):
-    """Delete balloon rows and renumber. Return (new, removed)."""
     removed = [d for d in ledger if d["uid"] == uid]
     new = [d for d in ledger if d["uid"] != uid]
     renumber(new)
@@ -95,7 +92,6 @@ def remove_bubble(ledger, uid):
 
 
 def migrate_uids(ledger):
-    """Backfill uids on legacy rows grouped by old base number."""
     from .common import base_of
     seen = {}
     nxt = 1

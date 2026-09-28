@@ -70,7 +70,6 @@ def _band(table, nominal, lo_first=0.5):
 
 
 def in_range(nominal, cls="m", lo_first=0.5):
-    """Nominal inside 2768-1 table so callers can flag out-of-table."""
     table = ISO2768.get(cls) or ISO2768.get("m") or []
     if nominal is None or nominal < lo_first or not table:
         return False
@@ -95,34 +94,30 @@ _CHAMFER_FEAT = _re.compile(
     r"|\d+(?:[.,]\d+)?[xX\u00d7](?:15|30|45|60)(?![\d.,]))", _re.I)
 
 
-# bare angle callout only
 _ANGLE_FEAT = _re.compile(
-    r"^\s*\d+(?:[.,]\d+)?\s*(?:\u00b0|DEG(?:REES?)?)\s*$", _re.I)
+    r"^\s*\d+(?:[.,]\d+)?\s*(?:\u00b0|DEG(?:REES?)?)"
+    "(?:\\s*\\d+(?:[.,]\\d+)?\\s*['\u2032])?"
+    "(?:\\s*\\d+(?:[.,]\\d+)?\\s*[\"\u2033])?\\s*$", _re.I)
 
 # most permissive angular band
 ANGLE_SHORTEST_SIDE = 0.0
 
 
 def is_angle_feature(feature):
-    """Feature text is bare angle callout."""
     return bool(_ANGLE_FEAT.match(str(feature or "")))
 
 
 def is_radius_feature(feature):
-    """Glyph test for radius (R8) or chamfer to pick which control shows."""
+    """Glyph test picks which control shows."""
     feat = str(feature or "")
     return bool(_RADIUS_FEAT.match(feat) or _CHAMFER_FEAT.match(feat))
 
 
-# edge-break note match
 _EDGE_FEAT = _re.compile(r"^\s*EDGE\b", _re.I)
 
 
 def is_broken_edge(feature):
-    """Feature is broken edge for Table 2."""
     return bool(_EDGE_FEAT.match(str(feature or "")))
-
-
 
 
 def iso2768_general_tol(nominal, cls, feature=None,

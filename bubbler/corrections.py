@@ -4,12 +4,12 @@
 # Reader-correction crop plus label store
 
 import os
+import re
 import json
 
 # adds predicted_region_class hard negative
 SCHEMA = 2
 
-# ledger type -> region class
 _TYPE_TO_REGION = {
     "GD&T": "feature_control_frame",
     "finish": "surface_finish",
@@ -33,7 +33,7 @@ def region_class_for(rows):
 
 
 def predicted_class(reader):
-    """Region class model read implied so correction carries wrong answer too (F6)."""
+    """Implied class so correction keeps wrong answer."""
     return region_class_for([reader]) if reader else None
 
 
@@ -54,10 +54,16 @@ def corrections_dir(cfg):
     return os.path.join(os.path.expanduser("~"), ".bubbler", "corrections")
 
 
-# F9 acceptance positive label
-ACC_SCHEMA = 1
+# acceptance schema, kit contract
+ACC_SCHEMA = 2
 _ACC_RECORD_KEYS = ("type", "feature", "nominal", "tol_sym", "tol_max",
                     "tol_min", "datums", "bubble", "tier")
+_PROPOSAL_KEYS = ("type", "feature", "nominal", "tol_sym", "tol_max",
+                  "tol_min", "datums")
+
+
+def proposal_of(row):
+    return {k: row.get(k) for k in _PROPOSAL_KEYS}
 
 
 def acceptances_dir(cfg):
@@ -68,9 +74,8 @@ def acceptances_dir(cfg):
 
 
 def acceptance_rec(row, page, box, crop_w, crop_h, drawing_tag, version=None):
-    """Acceptance record from shipped ledger row."""
     x0, y0, x1, y1 = box
-    return {
+    out = {
         "schema": ACC_SCHEMA,
         "version": version,
         "page": page,
@@ -80,10 +85,46 @@ def acceptance_rec(row, page, box, crop_w, crop_h, drawing_tag, version=None):
                    "symbols": symbols_for([row])},
         "record": {k: row.get(k) for k in _ACC_RECORD_KEYS},
         "accepted": True,
-        # F9 edited weaker positive
-        "edited": bool(row.get("edited")),
+        "uid": row.get("uid"),
         "drawing": drawing_tag,
     }
+    prop = row.get("proposal")
+    # bare number, value only
+    keys = (_PROPOSAL_KEYS if isinstance(prop, dict) and prop.get("type")
+            else tuple(k for k in _PROPOSAL_KEYS if k != "feature"))
+    if isinstance(prop, dict) and any(
+            _differs(k, prop.get(k), row.get(k)) for k in keys):
+        out["proposal"] = {k: prop.get(k) for k in _PROPOSAL_KEYS}
+        # corrections-store name
+        out["labels"]["predicted_region_class"] = region_class_for([prop])
+    return out
+
+
+def _differs(key, proposed, shipped):
+    if _norm(proposed) is None:
+        return False
+    if key == "feature":
+        proposed, shipped = strip_count(proposed), strip_count(shipped)
+    return _norm(proposed) != _norm(shipped)
+
+
+_COUNT = re.compile(r"^\s*\d+\s*[Xx\u00d7](?=\s|\u00d8)\s*")
+
+
+def strip_count(v):
+    return _COUNT.sub("", str(v or ""))
+
+
+def _norm(v):
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, (int, float)):
+        return round(float(v), 9)
+    t = " ".join(str(v).split())
+    try:
+        return round(float(t.replace(",", ".")), 9)
+    except ValueError:
+        return t or None
 
 
 def write_correction(dirpath, rec, png_bytes, stamp):

@@ -44,29 +44,5 @@ python Bubbler.py
  .build-venv\Scripts\python packaging\build.py # Windows
 ```
 
-## Train models (Linux, RTX 3080 Ti)
-1. Training deps are already in `requirements.txt` (pillow, ultralytics, onnx,
-   onnxsim, torch).
-
-2. Region detector
-
-```
-python train/generate_regions.py --out train/data/region --n 6000
-python train/train.py --data train/data/region/data.yaml --out bubbler/models/gdt_regions.onnx --device 0 --batch 32 --epochs 80
-```
-3. symbol detector
-
-```
-python train/generate_dataset.py --out train/data/symbols --n 6000
-python train/train.py --data train/data/symbols/data.yaml --out bubbler/models/gdt_symbols.onnx --device 0 --batch 32 --epochs 80
-```
-4. Validate:
-
-```
-python train/eval_regions.py --model bubbler/models/gdt_regions.onnx --conf 0.35 --show-misses
-python train/check_onnx.py --dir train/bgs --out-dir train/preds
-```
-
-5. (Offline VLM/OCR) place reader weights under `bubbler/models/`
-- Florence-2 (`onnx-community/Florence-2-base-ft` to `models/florence2/`)
-- P-OCRv4 + PaddleOCR-VL (run once on Linux, copy the paddle cache in). RapidOCR ships its own ONNX.
+### Model Training
+Will be released as separate repo

@@ -4,6 +4,7 @@
 # Bubble ledger, uid counter, session JSON.
 
 import copy
+import uuid
 import json
 import os
 import sys
@@ -17,10 +18,7 @@ SESSION_VERSION = 3
 # migrations survive two bumps
 MIN_SESSION_VERSION = SESSION_VERSION - 2
 
-# Fields belong to RUN
-RUN_FIELDS = ("measured", "ops", "gage")
-
-# Three run states: open, issued, closed out
+RUN_FIELDS = ("measured", "ops", "gage", "comment")
 
 
 class SessionReadOnly(RuntimeError):
@@ -62,7 +60,6 @@ def _migrate_v1(ledger):
 
 
 def heal_dual_types(ledger):
-    """Split dual `type` buggy build wrote."""
     from .common import TYPES
     n = 0
     for r in ledger:
@@ -86,14 +83,13 @@ _FOLD = {u"\u0142": "l", u"\u0141": "L", u"\u00f8": "o", u"\u00d8": "O",
 
 
 def _slug(text):
-    """ASCII token for report id, accents folded."""
     import unicodedata
     src = "".join(_FOLD.get(ch, ch) for ch in str(text or ""))
     src = unicodedata.normalize("NFKD", src)
     out = []
     for ch in src:
         if unicodedata.combining(ch):
-            continue                      # accent, already folded off
+            continue
         out.append(ch if (ch.isascii() and ch.isalnum()) else "_")
     return "_".join(x for x in "".join(out).split("_") if x)
 
@@ -104,11 +100,12 @@ def report_id(part, rev, day=None, taken=()):
     base = "-".join(x for x in (_slug(part), _slug(rev), _slug(day)) if x)
     if not base:
         base = "report"
-    taken = set(taken or ())
-    if base not in taken:
+    # Windows, macOS: `P-A` is `p-a`
+    taken = {str(t).lower() for t in (taken or ())}
+    if base.lower() not in taken:
         return base
     n = 2
-    while "%s-%d" % (base, n) in taken:
+    while ("%s-%d" % (base, n)).lower() in taken:
         n += 1
     return "%s-%d" % (base, n)
 
@@ -118,10 +115,11 @@ def _now():
 
 
 def new_run(rid, **kw):
-    """One inspection of project, measured values live here."""
     run = {"id": str(rid), "serial": "", "lot": "", "date": "",
            "inspector": "", "issued": False, "report_id": "",
            "closed": False, "closed_date": "", "touched": _now(),
+           # [{file, caption}], session-relative
+           "attachments": [],
            "rows": {}}
     for k, v in kw.items():
         if k in run:
@@ -143,34 +141,101 @@ def heal_legacy_issued(runs):
 
 
 def row_key(r, idx):
-    """Stable per-row key for run measurements, uid when present."""
+    k = r.get("rkey")
+    if k:
+        return str(k)
     u = r.get("uid")
     return str(u) if u is not None else "#%d" % idx
 
 
+def ensure_rkeys(rows, legacy=False):
+    """Minted once, carried with row, cannot drift."""
+    seen = set()
+    last = {}
+    count = {}
+    for i, r in enumerate(rows):
+        if r.get("uid") is not None:
+            last[r.get("uid")] = i
+            count[r.get("uid")] = count.get(r.get("uid"), 0) + 1
+    taken = {str(r["rkey"]) for r in rows if r.get("rkey")}
+    n = 0
+    for i, r in enumerate(rows):
+        k = r.get("rkey")
+        if k and str(k) not in seen:
+            seen.add(str(k))
+            continue
+        u = r.get("uid")
+        k = None
+        # lone row keys by uid, sub-row fresh
+        plain = u is not None and str(u) not in taken and str(u) not in seen
+        if plain and (count.get(u) == 1 or (legacy and last.get(u) == i)):
+            k = str(u)
+        while k is None or k in seen or k in taken:
+            n += 1
+            k = "%s.%s" % (u if u is not None else "r",
+                           uuid.uuid4().hex[:10])
+        r["rkey"] = k
+        seen.add(k)
+    return rows
+
+
 def split_rows(ledger):
-    """Split ledger into project rows plus run fields."""
     proj, meas = [], {}
+    ensure_rkeys(ledger)
     for i, r in enumerate(ledger):
+        key = row_key(r, i)
         pr = {k: v for k, v in r.items() if k not in RUN_FIELDS}
         m = {k: r[k] for k in RUN_FIELDS if k in r}
         proj.append(pr)
         if m:
-            meas[row_key(r, i)] = m
+            meas[key] = m
     return proj, meas
 
 
 def join_rows(proj_rows, meas):
-    """Rebuild ledger view from project requirements plus one run."""
     meas = meas or {}
     out = []
+    ensure_rkeys(proj_rows, legacy=True)
     for i, pr in enumerate(proj_rows):
+        key = row_key(pr, i)
         r = dict(pr)
         for k in RUN_FIELDS:
             r.pop(k, None)
-        r.update(meas.get(row_key(pr, i)) or {})
+        r.update(meas.get(key) or {})
         out.append(r)
     return out
+
+
+def migrate_comments(proj, runs, active):
+    """Each run keeps the comment it showed."""
+    ensure_rkeys(proj, legacy=True)
+    for run in runs:
+        reqs = run.get("reqs") if run.get("closed") else None
+        if not isinstance(reqs, list):
+            continue
+        ensure_rkeys(reqs, legacy=True)
+        rows = run.setdefault("rows", {})
+        for i, r in enumerate(reqs):
+            c = r.pop("comment", None)
+            if c not in (None, ""):
+                m = rows.setdefault(row_key(r, i), {})
+                m.setdefault("comment", c)
+    plain = [r for r in runs
+             if not (r.get("closed") and isinstance(r.get("reqs"), list))]
+    for i, pr in enumerate(proj):
+        c = pr.pop("comment", None)
+        if c in (None, ""):
+            continue
+        for run in plain:
+            m = run.setdefault("rows", {}).setdefault(row_key(pr, i), {})
+            m.setdefault("comment", c)
+
+
+def run_reqs(run, proj):
+    """Closed run's frozen copy, else project's."""
+    if run and run.get("closed") and isinstance(run.get("reqs"), list):
+        return run["reqs"]
+    return proj
 
 
 def _migrate_v2(ledger):
@@ -231,17 +296,16 @@ class BubbleStore:
         self.lock_kind = ""               # newer|too_old|corrupt|closed
         self.lock_detail = {}
         self.lock_reason = ""
-        self.runs = [new_run("run1")]     # at least one run
+        self.runs = [new_run("run1")]
         self.active_run = "run1"
-        self.drawing = {}                 # per-DRAWING settings
-        self.header = {}                  # title-block values (W28)
-        self._sealed = set()              # sealed run ids
-        self._proj = []                   # project rows on disk
+        self.drawing = {}
+        self.header = {}
+        self.run_moved_on_load = False
+        self._sealed = set()
+        self._proj = []
 
-    # ---------------------------------------------------- inspection runs
 
     def run(self, rid=None):
-        """Run dict by id or active one, None when absent."""
         want = self.active_run if rid is None else str(rid)
         for r in self.runs:
             if r.get("id") == want:
@@ -252,14 +316,12 @@ class BubbleStore:
         return [r.get("id") for r in self.runs]
 
     def _stash(self):
-        """Fold ledger's measured values back into active run."""
         run = self.run()
         if run is None or run.get("closed"):
             return                        # sealed not in memory
         run["rows"] = split_rows(self.ledger)[1]
 
     def _carry_proj(self):
-        """Project rows to carry into next run."""
         if self.active_run in self._sealed:
             return copy.deepcopy(self._proj)
         return split_rows(self.ledger)[0]
@@ -271,11 +333,12 @@ class BubbleStore:
         return "run%d" % n
 
     def add_run(self, **kw):
-        """Start fresh inspection, requirements stay measurements clear."""
         if self.read_only and self.lock_kind != "closed":
             raise SessionReadOnly(self.lock_reason or "session is read-only")
         self._stash()
         run = new_run(self._next_run_id(), **kw)
+        # "" = docs unwritten, not in new_run
+        run["docs_id"] = ""
         proj = self._carry_proj()
         self.runs.append(run)
         self.active_run = run["id"]
@@ -285,25 +348,24 @@ class BubbleStore:
         return run["id"]
 
     def set_active_run(self, rid):
-        """Switch runs, ledger re-joins onto same requirements."""
         rid = str(rid)
         if self.run(rid) is None:
             raise KeyError("no such run: %s" % rid)
         self._stash()
         proj = self._carry_proj()
         self.active_run = rid
-        self.ledger = join_rows(proj, self.run(rid).get("rows"))
+        self.ledger = join_rows(run_reqs(self.run(rid), proj),
+                                self.run(rid).get("rows"))
         self._sync_run_lock()
         self.notify()
         return rid
 
     def run_issued(self, rid=None):
-        """Report id stamped, run still editable."""
+        """Legacy flag, no Issue step now."""
         run = self.run(rid)
         return bool(run and run.get("issued"))
 
     def run_closed(self, rid=None):
-        """Closed out: finalized, sealed, never written again."""
         run = self.run(rid)
         return bool(run and run.get("closed"))
 
@@ -312,37 +374,62 @@ class BubbleStore:
         run = self.run(rid)
         stamp = str((run or {}).get("touched") or "")
         if not stamp:
-            return None                   # never written
+            return None
         try:
             then = datetime.fromisoformat(stamp)
         except ValueError:
             return None
         return max(0.0, (datetime.now() - then).total_seconds() / 86400.0)
 
-    def issue_run(self, part="", rev="", rid=None, day=None):
-        """Stamp report id for run, run stays EDITABLE."""
+    def mint_report_id(self, part="", rev="", rid=None, day=None):
+        """Follows part/rev until close-out, typed id stays."""
         run = self.run(rid)
         if run is None:
             raise KeyError("no such run: %s" % (rid,))
         if run.get("closed"):
             raise RunClosed("run %s was closed out" % run["id"])
-        if not run.get("report_id"):
+        src = run.get("report_src")
+        stale = (run.get("report_id") and isinstance(src, list)
+                 and len(src) == 3 and [part, rev] != src[:2])
+        if not run.get("report_id") or stale:
+            day = (src[2] if stale else None) or day \
+                or datetime.now().strftime("%Y%m%d")
             taken = [r.get("report_id") for r in self.runs
-                     if r.get("report_id")]
+                     if r.get("report_id") and r is not run]
             run["report_id"] = report_id(part, rev, day=day, taken=taken)
-        run["issued"] = True
-        if not run.get("date"):
-            run["date"] = (day or datetime.now().strftime("%Y%m%d"))
+            run["report_src"] = [part, rev, day]
+        # no run["date"], id has its day
         return run["report_id"]
 
+    def set_report_id(self, value, rid=None):
+        """Typed id stops following, one id per run."""
+        run = self.run(rid)
+        if run is None:
+            raise KeyError("no such run: %s" % (rid,))
+        if run.get("closed"):
+            raise RunClosed("run %s was closed out" % run["id"])
+        value = str(value or "").strip()
+        if any(c in value for c in "/\\:*?\"<>|") or value.startswith("."):
+            raise ValueError("report id %s is not a file name" % value)
+        low = value.lower()
+        if value and any(low == str(r.get("report_id") or "").lower()
+                         for r in self.runs if r is not run):
+            raise ValueError("report id %s is already used by another run"
+                             % value)
+        run["report_id"] = value
+        run.pop("report_src", None)
+        return value
+
     def close_run(self, rid=None, day=None):
-        """Finalize run, save persists then next save refuses."""
         run = self.run(rid)
         if run is None:
             raise KeyError("no such run: %s" % (rid,))
         if run.get("closed"):
             raise RunClosed("run %s was already closed out" % run["id"])
         self._stash()
+        # freeze requirements, later edits never re-judge
+        if run.get("id") == self.active_run:
+            run["reqs"] = copy.deepcopy(split_rows(self.ledger)[0])
         run["closed"] = True
         run["closed_date"] = day or datetime.now().strftime("%Y%m%d")
         return run["id"]
@@ -390,8 +477,7 @@ class BubbleStore:
         self.ledger, self.uid_seq = state
 
     def _lock(self, kind, msg, **detail):
-        """Refuse file, kind drives translated dialog."""
-        self.read_only = True             # never overwrite it
+        self.read_only = True
         self.lock_kind = kind
         self.lock_detail = detail
         self.lock_reason = msg
@@ -439,7 +525,7 @@ class BubbleStore:
 
     def load_session(self, path):
         if not os.path.isfile(path):
-            self._clear_lock()            # fresh path, no lock
+            self._clear_lock()
             return True
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -480,6 +566,7 @@ class BubbleStore:
                        reads="v%d-v%d" % (MIN_SESSION_VERSION,
                                           SESSION_VERSION))
             return False
+        moved = False
         try:
             if ver < 3:
                 ledger = copy.deepcopy(d.get("ledger", []))
@@ -501,9 +588,11 @@ class BubbleStore:
                     runs.append(one)
                 if not runs:
                     runs = [new_run("run1")]
-                active = str(d.get("active_run") or runs[0]["id"])
-                if all(r["id"] != active for r in runs):
-                    active = runs[0]["id"]
+                # newest run, not last active
+                active = runs[-1]["id"]
+                # missing active_run = moved
+                moved = (len(runs) > 1
+                         and str(d.get("active_run") or "") != active)
             uid_seq = int(d.get("uid_seq", d.get("next_num", 1)))
             drawing = copy.deepcopy(d.get("drawing") or {})
             if not isinstance(drawing, dict):
@@ -512,23 +601,25 @@ class BubbleStore:
             header = copy.deepcopy(d.get("header") or {})
             if not isinstance(header, dict):
                 header = {}
+            migrate_comments(proj, runs, active)
             cur = [r for r in runs if r["id"] == active][0]
-            ledger = join_rows(proj, cur.get("rows"))
+            ledger = join_rows(run_reqs(cur, proj), cur.get("rows"))
         except Exception as e:
             self._lock("corrupt",
                        "session load failed (%s): %s" % (e, path),
                        path=path, error=str(e))
             return False
         self.ledger = ledger
-        self._proj = copy.deepcopy(proj)  # sealed run carries out
+        self._proj = copy.deepcopy(proj)
         self.uid_seq = uid_seq
         self.drawing = drawing
         self.header = header
         self.runs = runs
         self.active_run = active
+        self.run_moved_on_load = moved
         self._sealed = set(r["id"] for r in runs if r.get("closed"))
         self._clear_lock()
-        self._sync_run_lock(path)         # immutable once closed out
+        self._sync_run_lock(path)
         return True
 
     def save_session(self, path):
@@ -553,7 +644,7 @@ class BubbleStore:
                        "runs": self.runs,
                        "active_run": self.active_run}, f)
         os.replace(tmp, path)
-        for r in self.runs:               # seals closed run
+        for r in self.runs:
             if r.get("closed"):
                 self._sealed.add(r["id"])
         self._sync_run_lock(path)

@@ -7,8 +7,7 @@ import os
 
 from .i18n import tr
 
-# row states
-OK = "ok"        # working
+OK = "ok"
 OFF = "off"      # off in settings
 NA = "na"        # backend missing
 WARN = "warn"    # out of contract
@@ -17,7 +16,6 @@ _CACHE = None
 
 
 def state_label(state):
-    """Short word for row state"""
     return {OK: tr('Working'),
             OFF: tr('Turned off'),
             NA: tr('Not available'),
@@ -30,7 +28,6 @@ def _row(key, label, state, detail, fix=""):
 
 
 def cached():
-    """Last probe result or None"""
     return _CACHE
 
 
@@ -41,7 +38,7 @@ def probe(cfg=None, refresh=True):
         return _CACHE
     cfg = dict(cfg or {})
     rows = []
-    for fn in (_row_pdf, _row_device, _row_symbols, _row_regions, _row_fcf,
+    for fn in (_row_pdf, _row_device, _row_symbols, _row_regions,
                _row_ocr, _row_florence, _row_paddle, _row_gpu_pack):
         try:
             r = fn(cfg)
@@ -55,10 +52,7 @@ def probe(cfg=None, refresh=True):
     return rows
 
 
-# ---------------------------------------------------------------- helpers
-
 def _ep_name(ep):
-    """Plain name for provider"""
     names = {
         "CPUExecutionProvider": tr('CPU'),
         "CUDAExecutionProvider": tr('NVIDIA GPU (CUDA)'),
@@ -71,7 +65,6 @@ def _ep_name(ep):
 
 
 def _chosen_ep(sess):
-    """Provider onnxruntime used, off session"""
     try:
         prov = list(sess.get_providers() or [])
     except Exception:
@@ -88,7 +81,6 @@ def _ort():
 
 
 def _offered():
-    """Providers onnxruntime build offers"""
     ort = _ort()
     if ort is None:
         return []
@@ -99,12 +91,11 @@ def _offered():
 
 
 def _reason(key):
-    from . import vision
-    return str(vision._REASONS.get(key) or "")
+    from .reader.vision import runtime
+    return str(runtime._REASONS.get(key) or "")
 
 
 def _short(path):
-    """models/<file>"""
     if not path:
         return ""
     return os.path.join(os.path.basename(os.path.dirname(path)),
@@ -112,10 +103,8 @@ def _short(path):
 
 
 def _det_row(key, label, cfg, path, sess, nc, want, classes_hint, fix_missing):
-    """One detector row with contract check and provider"""
     if sess is None:
         why = _reason(key) or tr('the model file was not found')
-        # stale bundled model
         fix = fix_missing
         if "class mismatch" in why:
             fix = tr('Bundled model is older than this version\'s class list '
@@ -124,8 +113,8 @@ def _det_row(key, label, cfg, path, sess, nc, want, classes_hint, fix_missing):
         return _row(key, label, NA,
                     tr('This pass is skipped. Reason: %s') % why, fix)
     ep = _ep_name(_chosen_ep(sess))
-    from . import vision
-    imgsz = vision._sess_imgsz(sess, cfg.get("vision_imgsz", 640))
+    from .reader.vision import runtime
+    imgsz = runtime._sess_imgsz(sess, cfg.get("vision_imgsz", runtime.IMGSZ_DEFAULT))
     where = tr('Loaded %s, running on %s.') % (_short(path), ep)
     if nc is not None and nc != want:
         return _row(key, label, WARN,
@@ -142,11 +131,9 @@ def _det_row(key, label, cfg, path, sess, nc, want, classes_hint, fix_missing):
                 % {"classes": known, "px": imgsz, "hint": classes_hint})
 
 
-# ------------------------------------------------------------------ rows
-
 def _row_pdf(cfg):
-    from . import vision
-    if vision._fitz() is None:
+    from .reader.vision import render
+    if render._fitz() is None:
         return _row("pdf", tr('Drawing page rendering'), NA,
                     tr('PyMuPDF is missing, so no page image can be made and '
                        'every vision pass is skipped.'),
@@ -157,7 +144,6 @@ def _row_pdf(cfg):
 
 
 def _row_device(cfg):
-    """GPU or CPU and provider chosen"""
     label = tr('Compute device')
     ort = _ort()
     if ort is None:
@@ -165,10 +151,9 @@ def _row_device(cfg):
                     tr('onnxruntime is missing, so no detector and no '
                        'built-in OCR can run.'),
                     tr('Reinstall Bubbler; the packaged build includes it.'))
-    from . import vision
+    from .reader.vision import runtime
     sess = None
-    for get in (vision._symbol_session, vision._region_session,
-                vision._fcf_cls_session):
+    for get in (runtime._symbol_session, runtime._region_session):
         try:
             sess = sess or get(cfg)
         except Exception:                               # pragma: no cover
@@ -209,7 +194,7 @@ def _row_device(cfg):
 
 
 def _row_symbols(cfg):
-    from . import vision
+    from .reader.vision import runtime
     label = tr('GD&T symbol detector')
     if not cfg.get("vision_assist", True) or not cfg.get("vision_symbols",
                                                          True):
@@ -217,17 +202,17 @@ def _row_symbols(cfg):
                     tr('Switched off, so GD&T glyphs are read from the text '
                        'layer only.'),
                     tr('Settings > Vision: tick Detect GD&T symbols.'))
-    sess = vision._symbol_session(cfg)
-    want = len(vision._SYM_CLASSES)
-    return _det_row("symbols", label, cfg, vision._model_path(cfg), sess,
-                    vision._out_nc(sess, want) if sess else None, want,
+    sess = runtime._symbol_session(cfg)
+    want = len(runtime._SYM_CLASSES)
+    return _det_row("symbols", label, cfg, runtime._model_path(cfg), sess,
+                    runtime._out_nc(sess, want) if sess else None, want,
                     tr('Finds the symbols the text layer leaves out.'),
                     tr('Settings > Vision: clear Custom model, or reinstall '
                        'Bubbler to restore the bundled detector.'))
 
 
 def _row_regions(cfg):
-    from . import vision
+    from .reader.vision import runtime
     label = tr('Callout block detector')
     if not cfg.get("vision_assist", True) or not cfg.get("vision_region",
                                                          True):
@@ -235,52 +220,24 @@ def _row_regions(cfg):
                     tr('Switched off, so callouts are grouped by geometry '
                        'alone.'),
                     tr('Settings > Vision: tick Detect callout blocks.'))
-    sess = vision._region_session(cfg)
-    want = len(vision._REGION_CLASSES)
-    return _det_row("region", label, cfg, vision._region_model_path(cfg), sess,
-                    vision._out_nc(sess, want) if sess else None, want,
+    sess = runtime._region_session(cfg)
+    want = len(runtime._REGION_CLASSES)
+    return _det_row("region", label, cfg, runtime._region_model_path(cfg), sess,
+                    runtime._out_nc(sess, want) if sess else None, want,
                     tr('Groups a callout and its tolerances into one block.'),
                     tr('Settings > Vision: clear the region model box, or '
                        'reinstall Bubbler.'))
 
 
-def _fcf_nc(sess):
-    """Classifier class count off head"""
-    try:
-        shape = sess.get_outputs()[0].shape
-    except Exception:                                   # pragma: no cover
-        return None
-    return shape[1] if len(shape) == 2 and isinstance(shape[1], int) else None
-
-
-def _row_fcf(cfg):
-    from . import vision
-    label = tr('Control-frame symbol reader')
-    if not cfg.get("vision_assist", True) or not cfg.get("vision_fcf_classify",
-                                                         True):
-        return _row("fcf", label, OFF,
-                    tr('Switched off, so a control frame keeps whatever '
-                       'symbol the text layer gives.'),
-                    tr('Settings > Vision: tick Read the frame symbol.'))
-    sess = vision._fcf_cls_session(cfg)
-    want = len(vision._FCF_CLASSES)
-    return _det_row("fcf", label, cfg, vision._fcf_cls_path(cfg), sess,
-                    _fcf_nc(sess) if sess else None, want,
-                    tr('Reads the characteristic symbol from the frame '
-                       'picture when the text layer has none.'),
-                    tr('Settings > Vision: clear the frame model box, or '
-                       'reinstall Bubbler.'))
-
-
 def _row_ocr(cfg):
-    from . import vision
+    from .reader.vision import ocr_read
     label = tr('Text reader: built-in OCR')
     if not cfg.get("vision_assist", True) or not cfg.get("vision_ocr", True):
         return _row("ocr", label, OFF,
                     tr('Switched off, so a scanned drawing with no text layer '
                        'reads as empty.'),
                     tr('Settings > Vision: tick Read text from the picture.'))
-    if vision._ocr_engine() is None:
+    if ocr_read._ocr_engine() is None:
         return _row("ocr", label, NA,
                     tr('This pass is skipped. Reason: %s')
                     % (_reason("ocr") or tr('the OCR engine did not load')),

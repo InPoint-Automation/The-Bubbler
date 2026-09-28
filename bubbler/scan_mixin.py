@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Scan mixin. Region select -> off-thread OCR/VLM -> ScanReview.
+# Scan mixin. Region select to OCR review.
 
 import copy
 
@@ -139,11 +139,20 @@ class ScanMixin:
 
     def _on_scan_done(self, result):
         self._teardown_scan()
+        from .reader.vision import runtime
+        if runtime.take_gpu_fallback():
+            self.set_status(tr('The graphics card ran out of memory, so the '
+                               'scan finished on the CPU. The reads are the '
+                               'same; scanning is slower until restart.'))
         if result is None:
             self.set_status(tr('scan cancelled'))
             return
         if result.get("vwords"):
             self.__dict__.setdefault("_vword_cache", {}).update(result["vwords"])
+            # scan page gentols read off these
+            self._drop_gtols(list(result["vwords"]))
+            if hasattr(self, "_sync_gentol"):
+                self._sync_gentol()
         inc, exc, all_pages = self._scan_ctx
         found = result["found"]
         gtols = result["gtols"]

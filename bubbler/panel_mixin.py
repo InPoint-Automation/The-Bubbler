@@ -15,7 +15,7 @@ from .panel_model import (BubbleTableModel, BubbleFilterProxy,
                           PANEL_COLS, INLINE_COLS)
 from .i18n import tr
 
-PANEL_MIN_W = 160      # below list unreadable
+PANEL_MIN_W = 160
 
 
 class PanelMixin:
@@ -75,7 +75,6 @@ class PanelMixin:
         self._apply_col_visibility(vis)
 
     def _apply_panel_width(self):
-        """Saved dock width clamped to window once."""
         if getattr(self, "_panel_w_done", False):
             return
         self._panel_w_done = True
@@ -91,7 +90,6 @@ class PanelMixin:
         self.resizeDocks([self.dock], [w], Qt.Horizontal)
 
     def _save_panel_width(self):
-        """Dock and column widths for next session."""
         tbl = getattr(self, "table", None)
         if tbl is not None:
             cols = {}

@@ -37,12 +37,10 @@ _SPECIAL = re.compile(r"</?s>|<pad>")
 
 _DEFAULT_PACKS = ("florence2", "florence2-base-ft", "florence2-large-ft")
 
-# HuggingFace repo
 HF_REPOS = {
     "florence2-base-ft": ("onnx-community/Florence-2-base-ft", ""),
     "florence2-large-ft": ("onnx-community/Florence-2-large-ft", "_quantized"),
 }
-# Graphs
 _DL_GRAPHS = ("vision_encoder", "embed_tokens", "encoder_model",
               "decoder_model_merged")
 
@@ -66,12 +64,11 @@ def _model_roots(model_root=None):
     except NameError:
         pass
     roots.append(os.path.join(os.path.dirname(sys.argv[0]), "models"))
-    roots.append(user_models_dir())            # on-demand download target
+    roots.append(user_models_dir())
     return roots
 
 
 def _pack_files(sfx):
-    """Repo-relative paths"""
     out = ["tokenizer.json"]
     for stem in _DL_GRAPHS:
         out.append("onnx/%s%s.onnx" % (stem, sfx))
@@ -100,11 +97,10 @@ def _download_one(url, dst, progress, should_cancel):
         os.remove(tmp)
         raise RuntimeError("incomplete download: %s (%d/%d bytes)"
                            % (os.path.basename(dst), int(done), int(size)))
-    os.replace(tmp, dst)                         # atomic swap
+    os.replace(tmp, dst)
 
 
 def download_pack(pack, dest_root=None, progress=None, should_cancel=None):
-    """Fetch Florence-2 HuggingFace"""
     spec = HF_REPOS.get(pack)
     if spec is None:
         raise ValueError("unknown pack: %s" % pack)
@@ -200,7 +196,6 @@ def can_load(cfg, model_root=None):
 
 
 class Florence2:
-    """Lazily-loaded Florence-2 ONNX reader (built via load)."""
 
     def __init__(self, sessions, tok, np):
         self._s = sessions

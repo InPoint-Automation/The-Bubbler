@@ -76,12 +76,16 @@ Runtime dependencies (installed via `pip`, compiled into the binaries by Nuitka)
 - [PySide6 (Qt for Python)](https://www.qt.io/qt-for-python) - LGPL-3.0 License - GUI framework. Qt ships several licenses [Third Party Licenses/pyside6](Third%20Party%20Licenses/pyside6/)
 - [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) - MIT License - Reading and writing the `.xlsx` inspection sheet
 - [NumPy](https://github.com/numpy/numpy) - BSD-3-Clause License - Array and numerical operations
-- [Pillow](https://github.com/python-pillow/Pillow) - HPND License - Image handling and the software renderer for part previews
+- [Pillow](https://github.com/python-pillow/Pillow) - HPND License - Image handling and the software renderer for part previews [Third Party Licenses/pillow](Third%20Party%20Licenses/pillow/)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) - MIT License - Runs the detector and reader `.onnx` models
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) - Apache-2.0 License - OCR engine (ships its own ONNX models)
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - Apache-2.0 License - PP-OCRv4 OCR engine and PaddleOCR-VL reader
 - [PaddlePaddle](https://github.com/PaddlePaddle/Paddle) - Apache-2.0 License - Runtime backing the PaddleOCR readers
 - [tokenizers](https://github.com/huggingface/tokenizers) - Apache-2.0 License - Tokenizer for the Florence-2 reader
+- [OpenCV (opencv-python)](https://github.com/opencv/opencv-python) - Apache-2.0 License - Image processing [Third Party Licenses/opencv-python](Third%20Party%20Licenses/opencv-python/)
+- [pyclipper](https://github.com/fonttools/pyclipper) - MIT License - OCR post-processing [Third Party Licenses/pyclipper](Third%20Party%20Licenses/pyclipper/)
+- [Shapely](https://github.com/shapely/shapely) - BSD-3-Clause License OCR post-processing [Third Party Licenses/shapely](Third%20Party%20Licenses/shapely/)
+- [imageio](https://github.com/imageio/imageio) - BSD-2-Clause License - Image reading [Third Party Licenses/imageio](Third%20Party%20Licenses/imageio/)
 
 Optional:
 
@@ -91,8 +95,7 @@ Optional:
 
 Training also uses
 [Ultralytics](https://github.com/ultralytics/ultralytics) (AGPL-3.0),
-[PyTorch](https://github.com/pytorch/pytorch) (BSD-3-Clause), `onnx`, `onnxsim`,
-and `pillow`.
+[PyTorch](https://github.com/pytorch/pytorch) (BSD-3-Clause), `onnx` and `onnxsim`
 
 The detector models shipped under `bubbler/models/` (`gdt_symbols.onnx`,
 `gdt_regions.onnx`) are trained by InPoint Automation and released under the

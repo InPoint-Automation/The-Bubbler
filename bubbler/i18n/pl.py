@@ -4,28 +4,29 @@
 # Polish translation catalog
 
 CATALOG = {
-    # ribbon gentol + hotbar leader
     'gen tol': 'tol. og.',
     'General tolerance in force on this page': 'Tolerancja ogólna obowiązująca na tej stronie',
     'General tolerance read from page 1 and reused here': 'Tolerancja ogólna odczytana ze strony 1 i użyta tutaj',
     'Leader on/off': 'Linia wł/wył',
     'Reset': 'Reset',
-    'Reset these to defaults': 'Przywróć domyślne',
+    'Clear the tolerances': 'Wyczyść tolerancje',
     'auto': 'auto',
     'band table': 'tabela pasm',
+    'Print': 'Rysunek',
+    'Manual': 'Ręcznie',
+    'fractions': 'ułamki',
+    'No general tolerance': 'Brak tolerancji ogólnej',
     'inherited': 'dziedziczona',
     'leaders off for %d bubble(s)': 'linie wyłączone dla %d bąbli',
     'leaders on for %d bubble(s)': 'linie włączone dla %d bąbli',
-    'next-bubble options reset': 'opcje następnego bąbla zresetowane',
+    'next-bubble tolerances cleared': 'tolerancje następnego bąbla wyczyszczone',
     'no general tol': 'brak tol. ogólnej',
     'printed .X block': 'blok .X z rysunku',
     'printed fractions': 'ułamki z rysunku',
     'settings ISO 2768': 'ISO 2768 z ustawień',
     'settings ladder': 'drabinka z ustawień',
-    # inspection-sheet labels
     'Inspection Sheet': 'Karta kontroli',
     'Part Name': 'Nazwa',
-    # title block rows 3-7
     'Part #': 'Nr części',
     # RETIRED spelling for sheet.RETIRED_LABEL_KEYS
     'FAIR #': 'Nr FAIR',
@@ -36,15 +37,18 @@ CATALOG = {
     'Serial/Lot': 'Nr seryjny/partia',
     'Inspector': 'Kontroler',
     'Inspection type': 'Typ kontroli',
+    'Default inspection type': 'Domyślny typ kontroli',
     # RETIRED spelling for sheet._renderings
     'FAI type': 'Typ FAI',
     'Stage': 'Etap',
-    # counters
     'Pass:': 'Zgodne:',
     'Fail:': 'Niezgodne:',
     'Yield:': 'Uzysk:',
+    'Disposition:': 'Decyzja:',
+    'ACCEPTED': 'ZATWIERDZONO',
+    'REJECTED': 'ODRZUCONO',
+    'IN PROGRESS': 'W TOKU',
     'Open:': 'Pozostało:',
-    # column headers
     'bubble#': 'nr balonu',
     'nominal': 'nominał',
     'pin Ø': 'trzpień Ø',
@@ -65,6 +69,7 @@ CATALOG = {
     'inspector': 'kontroler',
     'date': 'data',
     'comments': 'uwagi',
+    'Comment': 'Uwaga',
     'dim': 'wymiar',
     'hole': 'otwór',
     'thread': 'gwint',
@@ -92,7 +97,6 @@ CATALOG = {
     'Add sub-dim': 'Podwymiar',
     'Add sub-row': 'Dodaj podwiersz',
     'Add tool': 'Dodawanie',
-    'Advanced': 'Zaawansowany',
     'Align': 'Wyrównaj',
     'Align col': 'W kolumnę',
     'Align row': 'W rząd',
@@ -109,7 +113,6 @@ CATALOG = {
     'Bubbles': 'Bąble',
     'Bubbler read': 'Odczyt Bubblera',
 
-    # Settings tabs + gentol control
     'General': 'Ogólne',
     'Gages': 'Przyrządy',
     'Vision': 'Wizja',
@@ -133,7 +136,6 @@ CATALOG = {
         'Uzupełnia poziom tylko wtedy, gdy poziom '
         '"Następny bąbel" na wstążce jest pusty; poziom wybrany '
         'na wstążce zawsze wygrywa. Wył.: pusty zostaje pusty.',
-    # tier data identifiers (xlsx)
     'red': 'czerwony',
     'blue': 'niebieski',
     'green': 'zielony',
@@ -150,10 +152,9 @@ CATALOG = {
     'Capture': 'Przechwytywanie',
     'Capture failed: %s': 'Nieudane:\n%s',
     'Capture radius must be a number > 0': 'Promień musi być liczbą > 0',
-    'Captured & scanned bubbles step off the callout box in the preferred direction (arrow keys), dodging text, fills, thick edges and other bubbles. Thin leader': 'dimension lines are not avoided.',
     'Check all': 'Zaznacz',
     'Clear sel.': 'Wyczyść',
-    'Clear selection': 'wyczyść',
+    'Clear selection': 'Wyczyść zaznaczenie',
     'Close': 'Zamknij',
     'Company': 'Firma',
     'Could not write\n%s\n\n%s\n\nYour bubbles are NOT being saved to disk. Check free space, permissions, or whether the file is locked - Bubbler retries on the next change.': 'Nie można zapisać\n%s\n\n%s\n\nBąble NIE są zapisywane na dysk.',
@@ -169,9 +170,9 @@ CATALOG = {
     'Distribute H': 'Rozłóż H',
     'Type: %s': 'Typ: %s',
 
-    # Settings hints (settings_mixin._hint)
-    'Fills the header of a new sheet and the report, so it is not retyped per drawing.':
-        'Wypełnia nagłówek nowego arkusza i raportu, więc nie trzeba go wpisywać przy każdym rysunku.',
+    'Default inspector': 'Domyślny kontroler',
+    'Fills a blank inspector in the Header. A name typed there wins.':
+        'Wpisuje kontrolera, gdy w Nagłówku jest pusty. Wpisane tam nazwisko ma pierwszeństwo.',
     'Block detector (gdt_regions.onnx) not '
     'installed; callout grouping uses geometry.':
         'Detektor bloków (gdt_regions.onnx) nie jest zainstalowany; '
@@ -217,7 +218,7 @@ CATALOG = {
     'File': 'Plik',
     'Fit': 'dopasuj',
     'Fit %s needs nominal': 'pasowanie %s wymaga nominału',
-    'GPU': 'Execution provider',
+    'GPU': 'GPU',
     'Gage': 'Przyrząd',
     'Gage tolerance thresholds must be positive numbers': 'Progi muszą być dodatnie',
     'Group': 'Grupa',
@@ -230,7 +231,6 @@ CATALOG = {
     'Hotbar - Select tool': 'Zaznaczanie',
     'ISO 286: %s not supported at %g mm': 'ISO 286: %s nieobsługiwane przy %g mm',
     'Inspection sheet': 'Karta kontroli (xlsx)',
-    # rebuild retired-template workbook
     '%s was made by an older Bubbler.\n\nRebuild it on the current sheet? Your title block and measurements are kept, and a copy is saved next to it. Rows or columns you added, and custom formatting, are NOT kept.':
         '%s został utworzony przez starszą wersję Bubblera.\n\nPrzebudować na bieżącej karcie? Tabliczka i pomiary zostaną zachowane, a kopia zapisana obok. Wiersze i kolumny dodane ręcznie oraz własne formatowanie NIE zostaną zachowane.',
     'Rebuild failed: %s':
@@ -249,7 +249,6 @@ CATALOG = {
     'Measure': 'Pomiar',
     'Measure walk': 'pomiar',
     'Micrometer if tol ≤': 'Mikrometr gdy ≤',
-    'Mode': 'Tryb',
     'Mouse': 'Mysz',
     'Move leader tip': 'przesuń grot',
     'Move numeral': 'przesuń numer',
@@ -260,11 +259,15 @@ CATALOG = {
     'No text layer': 'Brak warstwy tekstu.',
     'No.': 'Nr',
     'Nominal (sticky values)': 'Nominał (jak poprzednio)',
-    'OCR': 'symbol passes need the vision build; geometry pass works now.',
+    'OCR': 'OCR',
     'OCR engine': 'Silnik OCR',
     'OCR every page, not just sparse ones': 'Każdą stronę',
     'OCR min confidence': 'Min. pewność OCR',
     'Open': 'Otwórz',
+    'Preview': 'Podgląd',
+    'Preview or print output': 'Podgląd lub wydruk',
+    'Open a drawing in a new window': 'Otwórz rysunek w nowym oknie',
+    'Open a drawing in a new window...': 'Otwórz rysunek w nowym oknie...',
     'Open a drawing': 'Otwórz rysunek',
     'Options': 'Opcje',
     'Overall': 'Całkowity',
@@ -286,7 +289,7 @@ CATALOG = {
     'Scan': 'Skanuj',
     'Scan failed: %s': 'Skan nieudany:\n%s',
     'Scan review': 'Przegląd',
-    'Uncertain frame read': 'Niepewny odczyt ramki',
+    'Uncertain read': 'Niepewny odczyt',
     'Scan: drag a GREEN box around the area to scan': 'Skanuj: zaznacz ZIELONE pole wokół obszaru',
     'Scan: drag a RED box to ignore, or Enter to skip': 'Skanuj: zaznacz CZERWONE pole do pominięcia lub Enter',
     'Scanning...': 'Skanowanie...',
@@ -299,7 +302,6 @@ CATALOG = {
     'started over; damaged file kept as %s': 'rozpoczęto od nowa; uszkodzony plik zachowany jako %s',
     'Settings': 'Ustawienia',
     'Sheet error': 'Błąd',
-    'Simple': 'Prosty',
     'Skip': 'pomiń',
     'Snap to drawing geometry': 'Przyciągaj',
     'Snap to geometry': 'przyciąganie',
@@ -351,6 +353,10 @@ CATALOG = {
     'redo': 'ponowiono',
     'saved -> %s (+ .xlsx) in %s': 'zapisano → %s (+ .xlsx) in %s',
     'scan cancelled': 'anulowano skanowanie',
+    'The graphics card ran out of memory, so the scan finished on the CPU. The reads are the same; scanning is slower until restart.':
+        'Zabrakło pamięci karty graficznej, więc skan dokończono na '
+        'procesorze. Odczyty są te same; skanowanie jest wolniejsze do '
+        'ponownego uruchomienia.',
     'screw test': 'wkręt',
     'select 2+ bubbles': 'zaznacz 2+',
     'select 3+ bubbles': 'zaznacz 3+',
@@ -394,7 +400,6 @@ CATALOG = {
     'value': 'wartość',
     '• Detect GD&T symbols': 'Wykryj symbole GD&T',
     '• Group callouts with the block detector': 'Grupuj wg detektora bloków',
-    # ribbon button labels
     'Setup': 'Ustawienia',
     'Prev': 'Poprzednia',
     'Previous page  PgUp': 'Poprzednia strona  PgUp',
@@ -406,15 +411,13 @@ CATALOG = {
     'Rotate': 'Obróć',
     'Undo': 'Cofnij',
     'List': 'Lista',
-    # ribbon field labels
     'tol ±': 'tol ±',
-    'tol max': 'tol max',
+    'tol max': 'tol max',        # unstacked label
     'tol min': 'tol min',
     'tier': 'poziom',
     'radius': 'promień',
     'font': 'czcionka',
-    'ISO 2768 auto': 'ISO 2768 auto',
-    # measure bar
+    'ISO 2768 auto': 'ISO 2768 automatycznie',
     'op:': 'op:',
     'Enter=save+next  G/+=GO  N/-=NOGO  Shift+Enter=back  Tab=skip  Esc=exit':
         'Enter=zapisz+dalej  G/+=GO  N/-=NOGO  Shift+Enter=wstecz  '
@@ -423,12 +426,10 @@ CATALOG = {
     'prev: %s': 'poprz.: %s',
     'walk complete: %d/%d measured, %d out of tol':
         'zakończono: %d/%d zmierzonych, %d poza tolerancją',
-    # status bar
     ' Page %d/%d   next here #%d   zoom %d%%   bubbles here: %d   rows: %d '
     '(crit %d, CMM %d)   unsaved: %d':
         ' Strona %d/%d   tu #%d   zoom %d%%   bąbli tu: %d   wierszy: %d '
         '(kryt %d, CMM %d)   niezapisanych: %d',
-    # launcher recent picker
     'no bubbles yet': 'brak bąbli',
     'modified': 'zmodyfikowano',
     'session file damaged': 'uszkodzony plik sesji',
@@ -440,13 +441,22 @@ CATALOG = {
     'Template': 'Szablon',
     'Pick a recent drawing or browse for a PDF. The chip shows its bubble count.':
         'Wybierz ostatni rysunek lub wskaż plik PDF. Znacznik pokazuje liczbę bąbli.',
-    # bubble dialog labels
     'Bubble': 'Bąbel',
     'Nominal': 'Nominał',
     'Qty ×': 'Ilość ×',
-    'Number of instances; the measure walk takes that many readings and '
-    'keeps the worst.':
-        'Liczba wystąpień; pomiar pobiera tyle odczytów i zachowuje najgorszy.',
+    'Number of instances, printed as 2X. Bubble it to count them and measure each one.':
+        'Liczba wystąpień, drukowana jako 2X. Zaznacz, aby je policzyć i zmierzyć każde.',
+    'Bubble it': 'Balonuj',
+    'Already ballooned': 'Już zbalonowane',
+    'This value is already balloon #%s. Balloon it again?': 'Ta wartość to już balon nr %s. Zbalonować ponownie?',
+    'Add a count row, and take a reading per instance. Settings sets the default and whether the report keeps the worst or the average.':
+        'Dodaje wiersz liczby i odczyt dla każdego wystąpienia. Ustawienia określają domyślne i czy raport bierze najgorszy, czy średnią.',
+    'Several readings report': 'Raport z kilku odczytów',
+    'the worst': 'najgorszy',
+    'the average': 'średnia',
+    'With the quantity bubbled, each instance is measured. The report takes the worst reading or their average.':
+        'Gdy liczba jest balonowana, mierzy się każde wystąpienie. Raport bierze najgorszy odczyt lub ich średnią.',
+    'Quantity (2X): count it, a reading each': 'Liczba (2X): policz, odczyt dla każdego',
     'pattern ×': 'wzór ×',
     'shared:': 'wspólne:',
     'X & Y differ': 'X i Y różne',
@@ -460,7 +470,6 @@ CATALOG = {
     'out of table': 'poza tabelą',
     'auto from nominal': 'auto z nominału',
     'ISO 2768 n/a for this type': 'ISO 2768 nie dotyczy tego typu',
-    # angular gentol side length
     'Angle side': 'Bok kąta',
     'mm': 'mm',
     'shorter side': 'krótszy bok',
@@ -487,7 +496,6 @@ CATALOG = {
     'Tolerance: ± value, or ISO 286 fit (H7, g6, js9); max/min overrides':
         'Tolerancja: ± wartość lub pasowanie ISO 286 (H7, g6, js9); '
         'max/min nadpisuje',
-    # export / capture
     'Writing ballooned PDF...': 'Zapis PDF z bąblami...',
     'save cancelled': 'anulowano zapis',
     'session not saved: %s': 'nie zapisano sesji: %s',
@@ -496,7 +504,6 @@ CATALOG = {
         'Dołączony model jest starszy niż lista klas tej wersji i wymaga ponownego trenowania. Odczyt tekstu nadal działa; zaktualizuj Bubbler, gdy pojawi się przebudowany model.',
     'title block': 'tabliczka rysunkowa',
     'note': 'uwaga',
-    # keyhelp descriptions
     'Read callout: OCR/VLM + bubble': 'odczyt: OCR/VLM + bąbel',
     'Capture text region: OCR/VLM': 'przechwyć obszar: OCR/VLM',
     'Menu: edit, sub-rows, delete': 'menu: edycja, podwiersze, usuń',
@@ -508,6 +515,8 @@ CATALOG = {
     'Align row or column': 'Wyrownaj wiersz lub kolumne',
     'Zoom': 'zoom',
     'Zoom in': 'Powiększ',
+    'Fit height': 'Dopasuj wysokość',
+    'Fit width': 'Dopasuj szerokość',
     'Zoom out': 'Pomniejsz',
     'Notes': 'Uwagi',
     "The dialog's 'Leader line' box sets whether a balloon gets a line (default = ribbon state). Editing a bubble adds or removes its leader; L on the select-tool hotbar flips it for every selected bubble. On offsets the numeral automatically; off parks it on the callout.":
@@ -516,12 +525,11 @@ CATALOG = {
         'Przechwycone i zeskanowane bąble odsuwają się od pola wywołania w kierunku strzałek, omijając tekst, wypełnienia, grube krawędzie i inne bąble. Cienkie linie odniesienia i wymiarowe nie są omijane.',
     "Click or drag a callout to read it (OCR/VLM) and bubble it; Alt+click drops a plain bubble, no read. Bare numbers always bubble, taking the ribbon's sticky type and the title block's general tolerance. With the header editor open, a drag fills the focused field instead.":
         'Kliknij lub przeciągnij wywołanie, aby je odczytać (OCR/VLM) i obąblować; Alt+klik stawia zwykły bąbel bez odczytu. Same liczby zawsze się bąblują, biorąc typ ze wstążki i tolerancję ogólną z tabeli tytułowej. Przy otwartym edytorze nagłówka przeciągnięcie wypełnia aktywne pole.',
-    # Data + OOT + CMM import
     'Data': 'Dane',
     'Reports and data import': 'Raporty i import danych',
     'OOT report': 'Raport poza tol.',
     'Out-of-tolerance report': 'Raport przekroczeń tolerancji',
-    'Import CMM/CSV': 'Import CMM/CSV',
+    'Import CMM/CSV': 'Importuj CMM/CSV',
     'Tol': 'Tol',
     'Measured': 'Zmierzone',
     'Op': 'Op',
@@ -551,10 +559,8 @@ CATALOG = {
     'duplicate (superseded)': 'duplikat (zastąpiony)',
     'no bubble on drawing': 'brak bąbla na rysunku',
     'unreadable bubble': 'nieczytelny bąbel',
-    # page navigator
     'Pages': 'Strony',
     'Page navigator': 'Nawigator stron',
-    # reader-correction collector (flywheel)
     'Reader corrections': 'Poprawki czytnika',
     'Collect corrections and callouts (local, opt-in)':
         'Zbieraj poprawki i wywolania (lokalnie, opcjonalnie)',
@@ -583,7 +589,6 @@ CATALOG = {
     'Email us': 'Napisz do nas',
     'Review corrections': 'Przegląd poprawek',
     'Review corrections...': 'Przegląd poprawek...',
-    # acceptances (training data)
     'Collect shipped callouts as training data (local, opt-in)':
         'Zbieraj wysłane wywołania jako dane treningowe (lokalnie, opcjonalnie)',
     'Acceptances folder': 'Folder akceptacji',
@@ -593,31 +598,6 @@ CATALOG = {
         'Domyślnie wyłączone. Przy zapisie każde zbalonowane wywołanie staje '
         'się lokalnym oznaczonym przykładem (wycinek + pola, nazwa rysunku nie '
         'jest zapisywana); nic nie jest wysyłane automatycznie.',
-    # per-drawing metrics (time + counts)
-    'Record time + callout counts per drawing (local, opt-in)':
-        'Zapisuj czas + liczby wywołań na rysunek (lokalnie, opcjonalnie)',
-    'Metrics folder': 'Folder metryk',
-    'Off by default. On save, one local row per drawing '
-    '(minutes + counts, no drawing content); the product KPI, '
-    'never sent automatically.':
-        'Domyślnie wyłączone. Przy zapisie jeden lokalny wiersz na rysunek '
-        '(minuty + liczby, bez zawartości rysunku); wskaźnik KPI produktu, '
-        'nic nie jest wysyłane automatycznie.',
-    'Time and counts': 'Czas i liczby',
-    'Time and counts...': 'Czas i liczby...',
-    'No metrics yet. Enable "Record time + callout counts per drawing" in Settings, then save a drawing.':
-        'Brak metryk. Włącz „Zapisuj czas + liczby wywołań na rysunek” w Ustawieniach, a następnie zapisz rysunek.',
-    'Across %(n)d drawing(s):\n\n'
-    '  %(min).1f min per drawing (open to saved sheet)\n'
-    '  %(bub).1f callouts per drawing (%(tot)d total)\n'
-    '  %(edit).0f%% of callouts needed an edit\n\n'
-    'Local only, never sent.':
-        'Dla %(n)d rysunku/ów:\n\n'
-        '  %(min).1f min na rysunek (od otwarcia do zapisu arkusza)\n'
-        '  %(bub).1f wywołań na rysunek (razem %(tot)d)\n'
-        '  %(edit).0f%% wywołań wymagało poprawki\n\n'
-        'Tylko lokalnie, nic nie jest wysyłane.',
-    # output preview + print (L10)
     'Preview or print output...': 'Podgląd lub wydruk wyniku...',
     'Preview output': 'Podgląd wyniku',
     'Output preview': 'Podgląd wyniku',
@@ -630,13 +610,10 @@ CATALOG = {
     'Print...': 'Drukuj...',
     'Printing not available in this build.':
         'Drukowanie niedostępne w tej wersji.',
-    # H7 group + ungroup
     'Group into one': 'Zgrupuj w jeden',
     'Ungroup': 'Rozgrupuj',
-    # sheet column-layout preview
     'Sheet columns, in order:': 'Kolumny arkusza, w kolejnosci:',
     'Inspection sheet preview:': 'Podglad karty kontroli:',
-    # STEP 3D preview (add-on)
     '3D preview (STEP)': 'Podglad 3D (STEP)',
     'Offer a 3D STEP preview when opening a drawing (needs '
     'OpenCASCADE)':
@@ -666,7 +643,6 @@ CATALOG = {
     'Use this preview': 'Uzyj tego podgladu',
     '(preview unavailable)': '(podglad niedostepny)',
     'No 3D preview available.': 'Brak podgladu 3D.',
-    # parallel VLM cross-check
     'Cross-check risk callouts with the VLM (slow)':
         'Sprawdz krzyzowo wywolania ryzyka za pomoca VLM (wolne)',
     'On: run the VLM alongside the ONNX reader on GD&T and '
@@ -683,27 +659,51 @@ CATALOG = {
     'VLM read %s -- disagrees with reader':
         'VLM odczytal %s -- rozni sie od czytnika',
     'Reader and VLM agree': 'Czytnik i VLM sa zgodni',
-    # gentol editor revert-to-auto
     'Reset to auto': 'Przywroc automatyczne',
     'Drop hand correction, use the drawing (ISO 2768 class, or decimal ladder on inch drawings).':
         'Usuń ręczną poprawkę, użyj rysunku (klasa ISO 2768 lub drabinka dziesiętna dla rysunków calowych).',
     'Crop': 'Wycinek',
     'Region': 'Region',
     'Correct': 'Poprawnie',
+    'Correct...': 'Popraw...',
+    'Report preview': 'Podgląd raportu',
+    'Preview unavailable': 'Podgląd niedostępny',
+    'Hole callout order': 'Kolejność wywołania otworu',
+    'Hole': 'Otwór',
+    'Hole depth': 'Głębokość otworu',
+    "C'bore": 'Pogłębienie walcowe',
+    "C'bore depth": 'Głębokość pogłębienia walcowego',
+    "C'sink": 'Pogłębienie stożkowe',
+    "C'sink depth": 'Głębokość pogłębienia stożkowego',
+    "Drag to set the order a hole callout's sub-rows are numbered in -- the "
+    "same order in scan review, a clicked callout and the bubble dialog.":
+        'Przeciągnij, aby ustawić kolejność numerowania wierszy '
+        'wywołania otworu -- ta sama w przeglądzie skanu, klikniętym '
+        'wywołaniu i oknie balonu.',
+    'CSink Ø:': 'Pogł. stożk. Ø:',
+    'CSink depth needs CSink Ø':
+        'Głębokość pogłębienia stożkowego wymaga Ø',
+    'That bubble no longer exists': 'Ten balon już nie istnieje',
+    '(+%d more)': '(+%d więcej)',
+    'callout': 'oznaczenie',
+    'Confirm each auto-made bubble with a toast':
+        'Potwierdzaj każdy automatyczny balon powiadomieniem',
+    'On: a click that bubbles a callout with no dialog shows what was '
+    'bubbled for a moment, with a Correct button that opens it for editing.':
+        'Włączone: kliknięcie, które balonuje oznaczenie bez okna, przez '
+        'chwilę pokazuje, co zostało zbalonowane, z przyciskiem Popraw '
+        'otwierającym je do edycji.',
     'Reader was': 'Czytnik odczytał',
     '%d corrections collected': 'zebrano %d poprawek',
     'Export...': 'Eksport...',
-    # title-block autofill
     'no title block found': 'nie znaleziono tabelki',
     'Scan title block': 'Skanuj tabelkę',
     'title block scanned': 'tabelka zeskanowana',
-    # sheet capacity
     'Sheet full': 'Arkusz pełny',
     '%d new bubbles but only %d free rows on the inspection sheet. Nothing '
     'was saved. Remove bubbles or start a new sheet.':
         'Nowych bąbli: %d, a wolnych wierszy w arkuszu tylko %d. Nic nie '
         'zapisano. Usuń bąble lub rozpocznij nowy arkusz.',
-    # calculator
     'Calculator': 'Kalkulator',
     'Calc': 'Kalk.',
     'To measure': 'Do pomiaru',
@@ -718,7 +718,6 @@ CATALOG = {
     '= %s   (Enter again to save)': '= %s   (Enter ponownie, aby zapisać)',
     'reading %d/%d  (Enter next)': 'odczyt %d/%d  (Enter = następny)',
 
-    # session lock + not saved
     'READ-ONLY': 'TYLKO DO ODCZYTU',
     'READ-ONLY - NOT SAVING': 'TYLKO DO ODCZYTU - BRAK ZAPISU',
     'File: %s': 'Plik: %s',
@@ -732,16 +731,111 @@ CATALOG = {
     'This run was closed out, so it is final and cannot be changed.\n\nIssuing a report does not close a run; closing out does. Start a new run to inspect another part against this drawing.':
         'Ta seria została zamknięta, więc jest ostateczna i nie można jej zmieniać.\n\nWydanie raportu nie zamyka serii; zamyka ją dopiero zamknięcie. Rozpocznij nową serię, aby skontrolować kolejną część według tego rysunku.',
 
-    # inspection run lifecycle
     'Inspection run': 'Seria kontroli',
     'Run': 'Seria',
-    'Issue report': 'Wydaj raport',
-    'Issue and close out inspection': 'Wydaj raport i zamknij kontrolę',
     'Close out inspection...': 'Zamknij kontrolę...',
     'Close out inspection': 'Zamknij kontrolę',
     'Close out this run?': 'Zamknąć tę serię?',
     'Report %s': 'Raport %s',
-    'No report issued yet': 'Nie wydano jeszcze raportu',
+    'No report ID yet': 'Brak jeszcze numeru raportu',
+    'Save writes': 'Zapis tworzy',
+    'Drawing and report': 'Rysunek i raport',
+    'Statistics across runs': 'Statystyki z serii',
+    'Statistics across runs...': 'Statystyki z serii...',
+    '%d runs, %d characteristics measured': '%d serii, zmierzono %d charakterystyk',
+    'Runs': 'Serie',
+    'Mean': 'Średnia',
+    'Min': 'Min',
+    'Max': 'Maks',
+    'Range': 'Rozstęp',
+    'Std dev': 'Odch. std.',
+    'What the Data > Statistics across runs table shows for each characteristic. Descriptive only.': 'Co tabela Dane > Statystyki z serii pokazuje dla każdej charakterystyki. Tylko opisowo.',
+    'That row was removed by the edit.': 'Ten wiersz został usunięty przez edycję.',
+    'Attachment page %d of %d': 'Strona załącznika %d z %d',
+    'Report image missing: %s': 'Brak obrazu raportu: %s',
+    'Rows under this balloon': 'Wiersze pod tym balonem',
+    '%s\n\nThe report could not be written; nothing saved.':
+        '%s\n\nNie można zapisać raportu; nic nie zapisano.',
+    'Writing the output PDF...': 'Zapis wyjściowego PDF...',
+    'That is the drawing\'s own working file. Choose another name.':
+        'To jest plik roboczy rysunku. Wybierz inną nazwę.',
+    'Report images': 'Obrazy w raporcie',
+    'Report images...': 'Obrazy w raporcie...',
+    'Add, caption or order the images shown after the report rows.':
+        'Dodaj, podpisz lub uporządkuj obrazy pokazane po wierszach raportu.',
+    'Shown after the report rows, in this order. They belong to this run only.':
+        'Pokazywane po wierszach raportu, w tej kolejności. Należą tylko do '
+        'tej serii.',
+    'Caption': 'Podpis',
+    'Up': 'W górę',
+    'Down': 'W dół',
+    'Add report images': 'Dodaj obrazy do raportu',
+    'Could not copy %s: %s': 'Nie można skopiować %s: %s',
+    'Report image width': 'Szerokość obrazu w raporcie',
+    'Report images per page': 'Obrazy na stronę raportu',
+    'Automatic': 'Automatycznie',
+    'Width of an attached image, as a share of the page width, when images are laid out automatically.':
+        'Szerokość załączonego obrazu jako część szerokości strony, gdy obrazy '
+        'są rozmieszczane automatycznie.',
+    'Automatic fills the space left on the last report page, then stacks images at the width above. 1, 2 or 4 lays each page out as a grid.':
+        'Automatycznie wypełnia miejsce na ostatniej stronie raportu, a potem '
+        'układa obrazy jeden pod drugim w szerokości powyżej. 1, 2 lub 4 '
+        'układa każdą stronę jako siatkę.',
+    'As saved': 'Jak zapisano',
+    'Drawing, then report': 'Rysunek, potem raport',
+    'Report, then drawing': 'Raport, potem rysunek',
+    'Save as...': 'Zapisz jako...',
+    'Save what is shown as its own PDF.': 'Zapisz pokazaną zawartość jako osobny PDF.',
+    'No bubbled rows: the report is empty.': 'Brak wierszy z balonami: raport jest pusty.',
+    'Drawing only': 'Tylko rysunek',
+    'Report only': 'Tylko raport',
+    'Named copy not written': 'Nie zapisano nazwanej kopii',
+    'The named copy %s was not written: a file of that name already exists or could not be created. The run is still closed out; its documents are the working files.':
+        'Nie zapisano nazwanej kopii %s: plik o tej nazwie już istnieje lub '
+        'nie można go utworzyć. Seria i tak jest zamknięta; jej dokumentami '
+        'są pliki robocze.',
+    'Report pages first': 'Najpierw strony raportu',
+    'Put the report before the ballooned drawing.':
+        'Umieść raport przed rysunkiem z balonami.',
+    'What one Save puts in the output PDF. The print preview can still print or save any other combination.':
+        'Co jeden zapis umieszcza w wyjściowym PDF. Podgląd wydruku nadal '
+        'pozwala wydrukować lub zapisać dowolne inne połączenie.',
+    'Tolerance %s is not a number.': 'Tolerancja %s nie jest liczbą.',
+    'Fit %s: type the fit code in the ± field, on a millimetre drawing.':
+        'Pasowanie %s: wpisz kod pasowania w polu ±, na rysunku w '
+        'milimetrach.',
+    '%s: %s is not a number.': '%s: %s nie jest liczbą.',
+    'Depth': 'Głębokość',
+    'CBore Ø': 'Pogłębienie Ø',
+    'CBore depth': 'Głębokość pogłębienia',
+    'CSink Ø': 'Pogł. stożk. Ø',
+    'CSink depth': 'Głębokość pogł. stożk.',
+    'Tolerance': 'Tolerancja',
+    'The ribbon pin or tolerance holds something that is not a number.':
+        'Sworzeń lub tolerancja na wstążce nie jest liczbą.',
+    'Read by OCR from the scanned drawing: check it against the print. Click to correct.':
+        'Odczytane przez OCR ze skanu rysunku: sprawdź z wydrukiem. Kliknij, '
+        'aby poprawić.',
+    'Fit %s is an ISO 286 code for millimetre sizes. This drawing is in inches: enter the tolerance as numbers instead.':
+        'Pasowanie %s to kod ISO 286 dla wymiarów w milimetrach. Ten rysunek '
+        'jest w calach: wpisz tolerancję liczbami.',
+    'Ask about an OCR datum lettered I, O or Q':
+        'Pytaj o odczytaną przez OCR bazę I, O lub Q',
+    'The standards never letter a datum I, O or Q, so read off the pixels it is a misread. The row starts unticked in scan review; the letter is never changed.':
+        'Normy nigdy nie oznaczają bazy literą I, O ani Q, więc odczytana z '
+        'obrazu jest błędem odczytu. Wiersz startuje odznaczony w przeglądzie '
+        'skanu; litera nie jest zmieniana.',
+    'Report ID': 'Nr raportu',
+    'Fixed at close-out.': 'Ustalony przy zamknięciu kontroli.',
+    'Filled in for you and follows the part number and revision until you type your own. Fixed at close-out.':
+        'Wypełniany automatycznie i podąża za numerem części i '
+        'rewizją, dopóki nie wpiszesz własnego. Ustalony przy zamknięciu '
+        'kontroli.',
+    'Report ID %s cannot be used as a file name: leave out the characters /\\:*?"<>| and a leading dot.':
+        'Numer raportu %s nie może być nazwą pliku: pomiń znaki /\\:*?"<>| '
+        'i kropkę na początku.',
+    'Report ID %s is already used by another run.':
+        'Numer raportu %s jest już używany przez inną serię.',
     'Closing out locks this run. Its measured values, ballooned PDF and inspection sheet stop changing: Bubbler will not save over it, now or when you re-open the drawing.\n\nThe drawing is not locked. You can start a new run any time and inspect another part against it.':
         'Zamknięcie blokuje tę serię. Jej wartości zmierzone, PDF z bąblami i arkusz kontrolny przestają się zmieniać: Bubbler nie zapisze na niej, teraz ani przy ponownym otwarciu rysunku.\n\nRysunek nie jest zablokowany. W każdej chwili możesz rozpocząć nową serię i skontrolować kolejną część według niego.',
     'Close out': 'Zamknij',
@@ -751,7 +845,6 @@ CATALOG = {
         'Ta seria NIE została zamknięta: nie udało się zapisać jej PDF z bąblami ani arkusza kontrolnego.\n\nZamknięta seria odmawia każdego późniejszego zapisu, więc jej dokumenty trzeba zapisać teraz. Usuń powyższy problem i zamknij kontrolę ponownie.',
     'not closed out: documents not written':
         'nie zamknięto: dokumenty niezapisane',
-    'report %s issued': 'wydano raport %s',
     'inspection closed out': 'kontrola zamknięta',
     'new inspection run started': 'rozpoczęto nową serię kontroli',
     'closed out': 'zamknięta',
@@ -783,8 +876,10 @@ CATALOG = {
         'NIE zapisano na dysk',
     'Leader line from balloon to callout':
         'Linia odnośnika od balonu do wymiaru',
-    'On: the balloon sits beside the callout, with a line pointing back. Off: it sits on the callout. Same as the ribbon Leaders box and the L key.':
-        'Wł.: balon stoi obok wymiaru, linia wskazuje na niego. Wył.: stoi na wymiarze. To samo co pole Odnośniki na wstążce i klawisz L.',
+    'On: the balloon sits beside the callout, with a line pointing back. Off: it sits on the callout. Default for a drawing; the ribbon Leaders box sets the open one.':
+        'Wł.: balon stoi obok wymiaru, linia wskazuje na niego. Wył.: stoi na wymiarze. Domyślne dla rysunku; pole Odnośniki na wstążce ustawia otwarty.',
+    'The general tolerance follows the drawing standard: ISO 2768 by class on a millimetre drawing, the decimal-place ladder on an inch one. Default for a drawing; the ribbon switch sets the open one.':
+        'Tolerancja ogólna wynika z normy rysunku: ISO 2768 wg klasy na rysunku milimetrowym, drabinka miejsc dziesiętnych na calowym. Domyślne dla rysunku; przełącznik na wstążce ustawia otwarty.',
     'Stop the leader at the callout text':
         'Zatrzymaj odnośnik na tekście wymiaru',
     'Preferred balloon side': 'Preferowana strona balonu',
@@ -795,13 +890,11 @@ CATALOG = {
     'left': 'z lewej',
     'A preference, not a rule: a crowded side loses to a clear one.':
         'To preferencja, nie zasada: zatłoczona strona przegrywa z wolną.',
-    # inspection-sheet title block
     'Customer': 'Klient',
     'Units (mm/in)': 'Jednostki (mm/cal)',
     'Approved by': 'Zatwierdził',
     'Approval Date': 'Data zatwierdzenia',
 
-    # "What's available" tab
     "What's available": 'Co działa',
     'What Bubbler can do on this computer. Unavailable features are skipped quietly, so check here first if a scan finds nothing.':
         'Co Bubbler potrafi na tym komputerze. Niedostępne funkcje są po cichu pomijane, więc sprawdź tutaj najpierw, gdy skan nic nie znajduje.',
@@ -855,7 +948,6 @@ CATALOG = {
         'kartę NVIDIA, zainstaluj pakiet GPU niżej na tej karcie.',
     'GD&T symbol detector': 'Detektor symboli GD&T',
     'Callout block detector': 'Detektor bloków wymiarowych',
-    'Control-frame symbol reader': 'Czytnik symbolu ramki tolerancji',
     'Loaded %s, running on %s.': 'Wczytano %s, działa na %s.',
     '%d classes, as expected': '%d klas, zgodnie z oczekiwaniem',
     'class count could not be read': 'nie udało się odczytać liczby klas',
@@ -872,8 +964,6 @@ CATALOG = {
         'Znajduje symbole, których brakuje w warstwie tekstowej.',
     'Groups a callout and its tolerances into one block.':
         'Łączy wymiar i jego tolerancje w jeden blok.',
-    'Reads the characteristic symbol from the frame picture when the text layer has none.':
-        'Odczytuje symbol cechy z obrazu ramki, gdy warstwa tekstowa go nie ma.',
     'Settings > Vision: clear Custom model, or reinstall Bubbler to restore '
     'the bundled detector.':
         'Ustawienia > Wizja: wyczyść Własny model albo zainstaluj Bubbler '
@@ -881,23 +971,14 @@ CATALOG = {
     'Settings > Vision: clear the region model box, or reinstall Bubbler.':
         'Ustawienia > Wizja: wyczyść pole modelu bloków albo zainstaluj '
         'Bubbler ponownie.',
-    'Settings > Vision: clear the frame model box, or reinstall Bubbler.':
-        'Ustawienia > Wizja: wyczyść pole modelu ramki albo zainstaluj '
-        'Bubbler ponownie.',
     'Switched off, so GD&T glyphs are read from the text layer only.':
         'Wyłączone, więc znaki GD&T są czytane tylko z warstwy tekstowej.',
     'Switched off, so callouts are grouped by geometry alone.':
         'Wyłączone, więc wymiary są grupowane wyłącznie po geometrii.',
-    'Switched off, so a control frame keeps whatever symbol the text layer '
-    'gives.':
-        'Wyłączone, więc ramka tolerancji zachowuje symbol z warstwy '
-        'tekstowej.',
     'Settings > Vision: tick Detect GD&T symbols.':
         'Ustawienia > Wizja: zaznacz Wykrywaj symbole GD&T.',
     'Settings > Vision: tick Detect callout blocks.':
         'Ustawienia > Wizja: zaznacz Wykrywaj bloki wymiarowe.',
-    'Settings > Vision: tick Read the frame symbol.':
-        'Ustawienia > Wizja: zaznacz Odczytuj symbol ramki.',
     'Text reader: built-in OCR': 'Czytnik tekstu: wbudowane OCR',
     'Text reader: Florence-2': 'Czytnik tekstu: Florence-2',
     'Text reader: PaddleOCR-VL': 'Czytnik tekstu: PaddleOCR-VL',
@@ -958,7 +1039,6 @@ CATALOG = {
         'Bubbler jeszcze raz.',
     'Installed and answering: %s': 'Zainstalowane i odpowiada: %s',
 
-    # Units + gentol ladder + validation
     'Unit system': 'Układ jednostek',
     'Bubbler cannot tell what units this drawing uses.':
         'Bubbler nie rozpoznał jednostek tego rysunku.',
@@ -1025,8 +1105,6 @@ CATALOG = {
         'niebieski MAJOR, zielony MINOR). KEY nigdy nie jest zapisywany, '
         'więc pozostaje do wpisania ręcznie.',
 
-    # Settings dialog tabs (L3)
-    'Language and mode': 'Język i tryb',
     'Appearance': 'Wygląd',
     'New bubble defaults': 'Domyślne nowego bąbla',
     'Placement': 'Rozmieszczenie',
@@ -1117,7 +1195,6 @@ CATALOG = {
     'Untick to force CPU.':
         'Domyślnie włączone. Po zainstalowaniu pakietu detektory działają '
         'na GPU. Odznacz, aby wymusić CPU.',
-    # Measure bar ops (L9)
     'not made until %s': 'powstaje dopiero w %s',
     'carried forward from %s: %s': 'przeniesione z %s: %s',
     're-measure: was %s at %s': 'zmierz ponownie: było %s w %s',
@@ -1134,9 +1211,7 @@ CATALOG = {
     'how': 'czym',
     'Method or gage for this measurement.':
         'Metoda lub przyrząd dla tego pomiaru.',
-    # Settings dialog input errors
     'UI scale must be a number': 'Skala interfejsu musi być liczbą',
-    # FAI report settings (M1)
     'Report #': 'Raport nr',
     'FAI report': 'Raport FAI',
     'Show on the report': 'Pokaż na raporcie',
@@ -1158,7 +1233,6 @@ CATALOG = {
     'Comments column': 'Kolumna uwag',
     'Tolerance bar': 'Pasek tolerancji',
     'QA signature block': 'Blok podpisu kontroli',
-    # correcting gentol block (gentol_edit)
     'General tolerances': 'Tolerancje ogólne',
     'Read off the drawing': 'Odczytane z rysunku',
     'Use what the drawing says': 'Użyj tego, co podaje rysunek',
@@ -1206,10 +1280,25 @@ CATALOG = {
         'Poprawione ręcznie dla tego rysunku. Kliknij, aby zmienić.',
     'From page 1, reused here. Click to correct.':
         'Ze strony 1, użyte tutaj. Kliknij, aby poprawić.',
-    'The general tolerance the next bubble inherits on this '
-    'page. Click to correct.':
-        'Tolerancja ogolna, ktora dziedziczy nastepny balon na tej '
-        'stronie. Kliknij, aby poprawic.',
+    'The general tolerance for this page. Click to correct.':
+        'Tolerancja ogólna dla tej strony. Kliknij, aby poprawić.',
+    'General tolerance: inch ladder': 'Tolerancja ogólna: drabinka calowa',
+    'Reset all settings': 'Przywróć wszystkie ustawienia',
+    'Reset all settings...': 'Przywróć wszystkie ustawienia...',
+    'Put every setting back to its default?':
+        'Przywrócić wszystkie ustawienia do domyślnych?',
+    'Your tool catalog, scan presets, operations, gage list, tier '
+    'maps, decimal-place ladders and company details are reset too, '
+    'unless you tick the box below. Recent files and window layout '
+    'are kept. This cannot be undone.':
+        'Katalog narzędzi, szablony skanu, operacje, lista '
+        'przyrządów, mapy poziomów, drabinki miejsc dziesiętnych i dane '
+        'firmy również zostaną przywrócone, chyba że zaznaczysz pole '
+        'poniżej. Ostatnie pliki i układ okna zostaną zachowane. Tej '
+        'operacji nie można cofnąć.',
+    'Keep my catalogs and company details':
+        'Zachowaj moje katalogi i dane firmy',
+    'settings reset to defaults': 'przywrócono ustawienia domyślne',
     'corrected by hand': 'poprawiona ręcznie',
     'general tolerance corrected, %d rows updated':
         'tolerancja ogólna poprawiona, zaktualizowano wierszy: %d',
@@ -1224,7 +1313,6 @@ CATALOG = {
         'może działać na podstawie koloru, więc przekazany pakiet nic o '
         'nim nie mówi, o ile o to nie poprosisz.',
 
-    # first-run GPU offer (launcher._offer_gpu)
     'This computer has an NVIDIA card (driver %d) but Bubbler reads drawings on the CPU.':
         'Ten komputer ma kartę NVIDIA (sterownik %d), ale Bubbler czyta rysunki na CPU.',
     'The GPU pack installs separately to keep the download small. It speeds up detectors only; text reading is unchanged.\n\nSettings > Vision > Install or update GPU pack.':
@@ -1233,7 +1321,6 @@ CATALOG = {
     'Not now': 'Nie teraz',
     'Do not show this again': 'Nie pokazuj tego ponownie',
 
-    # W70 BASIC/REF on sheet
     'Spell out BASIC or REF on the sheet':
         'Wypisz BASIC lub REF w arkuszu',
     'A bubbled BASIC or REFERENCE dimension is an ordinary row either way. '
@@ -1243,15 +1330,16 @@ CATALOG = {
         'obu przypadkach. Wł.: słowo jest zapisywane po wartości, bo '
         'nawias kwadratowy łatwo przeoczyć na wydrukowanym pakiecie.',
 
-    # scan-review scope presets (scanscope.py)
     'What to bubble by default': 'Co domyślnie balonować',
     'Inspection': 'Kontrola',
     'Edit presets...': 'Edytuj ustawienia wstępne...',
-    'The sheet says which inspection this is in its Inspection type cell, '
-    'and that wins over this default. Nothing is ever hidden from scan '
-    'review -- only the starting tick changes.':
-        'Arkusz podaje rodzaj kontroli w komórce Typ kontroli i to ma pierwszeństwo '
-        'przed tym ustawieniem. Nic nie jest ukrywane w przeglądzie skanu -- '
+    "Each run says which inspection it is in the sheet's Inspection type "
+    "cell, and that wins over this default; a new run starts from the "
+    "previous run's. Nothing is ever hidden from scan review -- only the "
+    "starting tick changes.":
+        'Każdy przebieg podaje rodzaj kontroli w komórce Typ kontroli arkusza '
+        'i to ma pierwszeństwo przed tym ustawieniem; nowy przebieg zaczyna od '
+        'wartości poprzedniego. Nic nie jest ukrywane w przeglądzie skanu -- '
         'zmienia się tylko początkowe zaznaczenie.',
     'A preset sets which callouts start TICKED in scan review. Nothing is '
     'hidden -- every callout found stays listed, so you can tick it yourself.':
@@ -1285,7 +1373,6 @@ CATALOG = {
         '- decyduje, co jest zaznaczone na starcie. Zapamiętane dla tego '
         'rysunku.',
 
-    # W3 broken-edge radius mark
     'This is a broken edge': 'To jest złamana krawędź',
     'Edge break = the general "break sharp edges" note; ISO '
     '2768-1 gives it a wide table. A dimensioned chamfer, fillet '
@@ -1295,4 +1382,187 @@ CATALOG = {
         'ISO 2768-1 daje mu szeroką tabelę. Wymiarowana faza, zaokrąglenie '
         'lub promień sferyczny to cecha i bierze ciaśniejszą tabelę '
         'liniową. Zaznacz tylko, gdy oznaczenie JEST złamaniem krawędzi.',
+    '* some runs were measured against a different requirement; their readings are included.':
+        '* niektóre serie mierzono wobec innego wymagania; ich odczyty są uwzględnione.',
+    'Closed runs only': 'Tylko zamknięte serie',
+    'Toast shown for':
+        'Powiadomienie widoczne przez',
+    'How long each auto-bubble toast stays up. Hovering a toast holds them all.':
+        'Jak długo widać każde powiadomienie o automatycznym dymku. Najechanie na powiadomienie zatrzymuje wszystkie.',
+    'Toasts stacked at most':
+        'Najwięcej powiadomień naraz',
+    'Clicking faster than the toasts expire stacks them; past this many the oldest goes.':
+        'Szybsze klikanie niż znikają powiadomienia układa je w stos; powyżej tej liczby najstarsze znika.',
+    "Bubbles avoid other callouts' boxes":
+        'Dymki omijają ramki innych wymiarów',
+    'On: a balloon also keeps off the boxes of callouts already bubbled (and of the others in one scan), not only off their text.':
+        'Wł.: dymek omija także ramki wymiarów już oznaczonych (i pozostałych z jednego skanu), nie tylko ich tekst.',
+    "Type a unit to convert it: 1.5in or 25.4mm becomes the drawing's unit.":
+        'Wpisz jednostkę, by przeliczyć: 1.5in lub 25.4mm zmienia się na jednostkę rysunku.',
+    'Tap drill (under a thread)':
+        'Wiertło pod gwint',
+    'Tap drill depth':
+        'Głębokość wiercenia pod gwint',
+    "Drag to set the order a hole callout's sub-rows are numbered in -- the same order in scan review, a clicked callout and the bubble dialog. Untick a part to leave it unbubbled by default (it still shows in scan review).":
+        'Przeciągnij, by ustawić kolejność numerowania części opisu otworu -- ta sama w przeglądzie skanu, klikniętym opisie i oknie dymka. Odznacz część, by domyślnie jej nie oznaczać (nadal widać ją w przeglądzie skanu).',
+    'one part here: click it to bubble':
+        'jedna część: kliknij, by oznaczyć',
+    'Bubble one part':
+        'Oznacz jedną część',
+    'Bubble the tap drill under this thread too. Settings sets the default.':
+        'Oznacz też wiercenie pod ten gwint. Domyślne ustawia się w Ustawieniach.',
+    'Tap drill Ø:':
+        'Wiercenie pod gwint Ø:',
+    'Tap drill Ø':
+        'Wiercenie pod gwint Ø',
+    'Tap drill depth needs tap drill Ø':
+        'Głębokość wiercenia wymaga Ø wiercenia',
+    '%s is not a number.':
+        '%s nie jest liczbą.',
+    '%s needs the measured size and the %s size.':
+        '%s wymaga zmierzonego wymiaru i wymiaru %s.',
+    '60 degree thread. The basic pitch diameter is exact; the 6g/6H class limits need the ISO 965-2 table and are not calculated.':
+        'Gwint 60°. Nominalna średnica podziałowa jest dokładna; granice klas 6g/6H wymagają tablicy ISO 965-2 i nie są liczone.',
+    'Bilateral to unilateral':
+        'Symetryczna na jednostronną',
+    'Calculate':
+        'Oblicz',
+    'Clear':
+        'Wyczyść',
+    'Clear the history':
+        'Wyczyść historię',
+    'Click to reuse the expression; double-click to use the result':
+        'Kliknij, by użyć wyrażenia; dwuklik, by użyć wyniku',
+    'OUT of tolerance':
+        'POZA tolerancją',
+    'Fill in every field.':
+        'Wypełnij wszystkie pola.',
+    'Fit lookup (ISO 286)':
+        'Pasowanie (ISO 286)',
+    'Gage ratio':
+        'Stosunek przyrządu',
+    'Gage resolution':
+        'Rozdzielczość przyrządu',
+    'History':
+        'Historia',
+    'Hole code':
+        'Pole otworu',
+    'ISO 286 is a millimetre table: convert an inch size first.':
+        'ISO 286 to tablica milimetrowa: najpierw przelicz wymiar calowy.',
+    'Inspection tools':
+        'Narzędzia kontroli',
+    'LMC size':
+        'Wymiar LMC',
+    'Large diameter':
+        'Większa średnica',
+    'Length':
+        'Długość',
+    'Lower deviation (signed)':
+        'Odchyłka dolna (ze znakiem)',
+    'MMC size':
+        'Wymiar MMC',
+    'Major diameter':
+        'Średnica zewnętrzna',
+    'Measured feature size':
+        'Zmierzony wymiar elementu',
+    'Measured over wires (optional)':
+        'Zmierzone na wałeczkach (opcjonalnie)',
+    'Modifier':
+        'Modyfikator',
+    'No ISO 286 value for that size and code.':
+        'Brak wartości ISO 286 dla tego wymiaru i pola.',
+    'Nominal (mm)':
+        'Nominał (mm)',
+    'within tolerance':
+        'w tolerancji',
+    'Pitch':
+        'Skok',
+    'Plus/minus':
+        'Plus/minus',
+    'Position %s   allowed %s (bonus %s)   %s':
+        'Pozycja %s   dopuszczalna %s (bonus %s)   %s',
+    'Position tolerance (dia)':
+        'Tolerancja pozycji (średnica)',
+    'Ra and Rz':
+        'Ra i Rz',
+    'Rz = 4 x Ra is a rule of thumb with no standard behind it: never judge a part on the converted number.':
+        'Rz = 4 x Ra to reguła praktyczna bez normy: nie oceniaj części na podstawie przeliczonej liczby.',
+    'Shaft code':
+        'Pole wałka',
+    'Shop rule: %s:1 (Settings).':
+        'Reguła zakładu: %s:1 (Ustawienia).',
+    'Small diameter':
+        'Mniejsza średnica',
+    'Taper':
+        'Stożek',
+    'The diameters must differ and the length be positive.':
+        'Średnice muszą się różnić, a długość być dodatnia.',
+    'Thread pitch diameter and wires':
+        'Średnica podziałowa gwintu i wałeczki',
+    'Tolerance band (total)':
+        'Pole tolerancji (całe)',
+    'Tools...':
+        'Narzędzia...',
+    'True position (RFS, MMC or LMC)':
+        'Pozycja (RFS, MMC lub LMC)',
+    'True position with bonus, fits, gage ratio, thread wires, taper, tolerance forms -- prefilled from the selected bubble':
+        'Pozycja z bonusem, pasowania, stosunek przyrządu, wałeczki gwintu, stożek, postacie tolerancji -- wypełnione z zaznaczonego dymka',
+    'Unilateral to bilateral':
+        'Jednostronna na symetryczną',
+    'Upper deviation':
+        'Odchyłka górna',
+    'Use result':
+        'Użyj wyniku',
+    'Wire size (blank = best wire)':
+        'Średnica wałeczka (puste = optymalny)',
+    'X deviation':
+        'Odchyłka X',
+    'Y deviation':
+        'Odchyłka Y',
+    'basic pitch dia %s   wire %s   over wires %s':
+        'średnica podziałowa %s   wałeczek %s   na wałeczkach %s',
+    'below the shop rule':
+        'poniżej reguły zakładu',
+    'clearance %s..%s':
+        'luz %s..%s',
+    'included %s°   half %s°   1:%s':
+        'kąt %s°   połowa %s°   1:%s',
+    'measured pitch dia %s':
+        'zmierzona średnica podziałowa %s',
+    'meets the shop rule':
+        'spełnia regułę zakładu',
+    'Header and run':
+        'Nagłówek i seria',
+    "Header and run: the part, and this run's serial, inspector, date, type and report":
+        'Nagłówek i seria: część oraz numer seryjny, kontroler, data, rodzaj i raport tej serii',
+    'ISO 2768 class picked by hand for this drawing. Pick the printed class on the ribbon to go back.':
+        'Klasa ISO 2768 wybrana ręcznie dla tego rysunku. Wybierz na wstążce klasę z rysunku, by wrócić.',
+    'no callout here':
+        'brak opisu w tym miejscu',
+    'OUT of size: no bonus':
+        'POZA wymiarem: bez bonusu',
+    '%s needs the measured size and both the MMC and LMC sizes.':
+        '%s wymaga zmierzonego wymiaru oraz wymiarów MMC i LMC.',
+    'The gage resolution must be above zero.':
+        'Rozdzielczość przyrządu musi być większa od zera.',
+    'The diameter and the pitch must be above zero.':
+        'Średnica i skok muszą być większe od zera.',
+    'No shop rule is set (Settings).':
+        'Brak reguły zakładu (Ustawienia).',
+    'Tolerance band (drawing units)':
+        'Pole tolerancji (jednostki rysunku)',
+    'Gage resolution (mm)':
+        'Rozdzielczość przyrządu (mm)',
+    'The wire size must be above zero.':
+        'Średnica wałeczka musi być większa od zera.',
+    'Class (6g, 6H...)':
+        'Klasa (6g, 6H...)',
+            '%s pitch dia %s .. %s   over wires %s .. %s':
+        '%s średnica podziałowa %s .. %s   na wałeczkach %s .. %s',
+    '60 degree thread. Class limits: ISO metric, grade 6 (6e, 6f, 6g, 6h, 6G, 6H), the coarse sizes M1.6 to M39 and the fine pitches in the shipped table; anything else (and any inch drawing) gives the basic pitch diameter only.':
+        'Gwint 60°. Granice klas: metryczny ISO, stopień 6 (6e, 6f, 6g, 6h, 6G, 6H), zwykłe M1,6 do M39 i drobnozwojne z dołączonej tablicy; w innych przypadkach (i na rysunku calowym) tylko nominalna średnica podziałowa.',
+    '%s: not in the shipped ISO 965 table (grade 6, common sizes only).':
+        '%s: brak w dołączonej tablicy ISO 965 (stopień 6, tylko popularne rozmiary).',
+    'Class limits are for ISO metric threads: not calculated on an inch drawing.':
+        'Granice klas dotyczą gwintów metrycznych ISO: nie liczone na rysunku calowym.',
 }

@@ -6,12 +6,13 @@ import math
 import os
 import re
 
-from .config import gentol_ladder, units_of, ops_seq, OPS_DEFAULT
+from .config import (gentol_ladder, gentol_auto, units_of, ops_seq,
+                     OPS_DEFAULT)
 from .units import NOMINAL_DP
 
 APP_NAME = "Bubbler"
 ORG = "InPoint Automation Sp. z o.o."
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 RADIUS = 9.0
 FONTSZ = 10.0
@@ -27,7 +28,6 @@ TIER_RGB = {
 # no-cfg fallback
 TIER_SHAPE = {"red": "circle", "blue": "star", "green": "diamond"}
 SHAPES = ["circle", "square", "triangle", "diamond", "star"]
-# radial reach per shape
 SHAPE_EXTENT = {"circle": 1.0, "square": 1.415, "triangle": 1.15,
                 "diamond": 1.28, "star": 1.35}
 
@@ -40,7 +40,6 @@ TEXT_TOP = 0.724
 
 # ink-covering core
 BODY_F = 0.92
-# reference digits
 REF_DIGITS = 3.0
 
 
@@ -74,12 +73,10 @@ def shape_radius(shape, rad):
 
 
 def shape_extent(shape, rad):
-    """Outer reach of `shape` at `rad` for rings around it."""
     return shape_radius(shape, rad) * SHAPE_EXTENT.get(shape or "circle", 1.0)
 
 
 def widest_extent(rad, cfg=None):
-    """Widest reach of any in-use tier shape for tier-agnostic rings."""
     if cfg is None:
         shapes = set(TIER_SHAPE.values())
     elif not cfg.get("tier_shapes", True):
@@ -90,7 +87,6 @@ def widest_extent(rad, cfg=None):
 
 
 def shape_text_rect(cx, cy, rad, fsz):
-    """PDF textbox centring bubble number on (cx, cy)."""
     w = max(rad, fsz * 1.2)
     return (cx - w, cy - TEXT_TOP * fsz, cx + w, cy + rad + fsz)
 
@@ -120,7 +116,6 @@ def bubble_shape_points(shape, cx, cy, rad):
 
 
 def _point_in_poly(pts, x, y):
-    """Even-odd point-in-polygon test"""
     hit = False
     n = len(pts)
     for i in range(n):
@@ -145,7 +140,6 @@ def point_in_bubble(shape, cx, cy, rad, x, y, tol=0.0):
 
 
 def shape_support(shape, rad, ux, uy):
-    """Reach of drawn outline toward unit vector (ux, uy)."""
     pts = bubble_shape_points(shape, 0.0, 0.0, rad)
     if pts is None:
         return shape_radius(shape, rad)
@@ -158,7 +152,6 @@ def shape_body(shape, rad):
 
 
 def fit_fontsz(rad, fsz, text=""):
-    """Drawn font size (radius and font separate spinboxes)."""
     try:
         rad = float(rad)
         fsz = float(fsz)
@@ -180,14 +173,13 @@ TYPES = ["dim", "hole", "thread", "thru", "slot", "depth", "position",
          "GD&T", "finish"]
 TIERS = ["", "red", "blue", "green"]
 
-# ONE BUBBLE = ONE MEASUREMENT
 KIND_ATOMIC = "atomic"        # one bubble
 KIND_STACKED = "stacked"      # section then per row
 KIND_CONTAINER = "container"  # one per row
 KIND_META = "meta"            # no bubble
 KINDS = (KIND_ATOMIC, KIND_STACKED, KIND_CONTAINER, KIND_META)
 
-# BASIC/REFERENCE are MARKS (K4a)
+# BASIC/REFERENCE are MARKS
 MODIFIER_MARKS = frozenset({"[", "("})
 
 ADMIT = {
@@ -195,23 +187,20 @@ ADMIT = {
     "angular": {"°"} | MODIFIER_MARKS,
     "arc": {"⌒"} | MODIFIER_MARKS,
     "hole": {"Ø", "R", "DEEP", "CBORE", "CSINK"} | MODIFIER_MARKS,
-    # Y14.5 codepoints plus look-alikes
     "gdt": {"Ø", "⌖", "⏥", "○", "⌭", "⟂", "∥", "∠", "◎",
             "⌒", "⌓", "⌰", "↗", "⏤", "⌯",
             "▱", "◯"} | MODIFIER_MARKS,
     "finish": {"Ra"},
-    # edge break no marks
     "edge": {"EDGE"},
     "datum": set(),
+    "datum_target": {"Ø"},
     None: None,
 }
 
-# GD&T characteristic glyphs
 _GDT_CHAR_GLYPHS = frozenset({
     "⌖", "⏥", "○", "⌭", "⟂", "∥", "∠", "◎",
     "⌒", "⌓", "⌰", "↗", "⏤", "⌯", "▱", "◯"})
 
-# region disambiguated by an obligatory glyph
 REGION_NEEDS_SYMBOL = {
     "dim_diameter": frozenset({"Ø"}),
     "dim_radius": frozenset({"R"}),
@@ -222,14 +211,10 @@ REGION_NEEDS_SYMBOL = {
 
 
 def region_needs_symbol(cls):
-    """Glyph set confirming this region class, or None."""
     return REGION_NEEDS_SYMBOL.get(cls)
 
-# --- region vocabulary ---
-# complete callout with symbols
-# order is LABEL INDEX
+# region vocabulary. Order is LABEL INDEX
 REGION_CLASSES = (
-    # dimensional one bubble each
     "dim_length",
     "dim_diameter",
     "dim_radius",
@@ -239,20 +224,15 @@ REGION_CLASSES = (
     "dim_spherical",
     "dim_taper",
     "chamfer",
-    # features
     "hole",
     "slot",
-    # containers one per row
     "hole_table",
     "feature_control_frame",
-    # GD&T references
     "datum_feature",
     "datum_target",
-    # per-feature marks
     "surface_finish",
     "weld_symbol",
     "edge_condition",
-    # furniture detected for containment
     "title_block",
     "gentol_block",
     "finish_block",
@@ -260,22 +240,19 @@ REGION_CLASSES = (
     "revision_table",
     "standard_note",
     "projection_symbol",
-    # classified never bubbled
     "view_label",
     "section_line",
     "flag_note",
-    # furniture INTERIOR suppressed (K5)
     "border_zone",
     "parts_list",
-    # detected so it is KNOWN, not read as a dimension; never bubbled
     "revision_balloon",
-    # deliberate export negative: too few labeled to train
     "item_balloon",
-    # catch-all labeled never trained
     "other",
 )
 
-# three export groups (K3)
+# detected, claimed, not ballooned. App policy
+UNBALLOONED_CLASSES = frozenset(("datum_feature",))
+
 GROUP_BUBBLE = "bubble"          # yields ledger rows
 GROUP_SUPPRESS = "suppress"      # must be DETECTED
 GROUP_BACKGROUND = "background"  # hard negative
@@ -314,28 +291,24 @@ REGION_GROUP = {
     "flag_note": GROUP_SUPPRESS,
     "border_zone": GROUP_SUPPRESS,
     "parts_list": GROUP_SUPPRESS,
-    "revision_balloon": GROUP_SUPPRESS,   # know it so it is not read as a dim
+    "revision_balloon": GROUP_SUPPRESS,
     "item_balloon": GROUP_BACKGROUND,
     "other": GROUP_UNTRAINED,
 }
 
 
 def region_group(group):
-    """Export group's classes in vocabulary order."""
     return tuple(c for c in REGION_CLASSES if REGION_GROUP.get(c) == group)
 
 
-# detector head in order
 TRAINED_REGION_CLASSES = tuple(
     c for c in REGION_CLASSES
     if REGION_GROUP.get(c) in (GROUP_BUBBLE, GROUP_SUPPRESS))
 BACKGROUND_REGION_CLASSES = region_group(GROUP_BACKGROUND)
 UNTRAINED_REGION_CLASSES = region_group(GROUP_UNTRAINED)
 
-# trained classes are PREFIX
 assert TRAINED_REGION_CLASSES == REGION_CLASSES[:len(TRAINED_REGION_CLASSES)]
 
-# K5 containment
 FURNITURE_CONTAINERS = ("title_block", "gentol_block", "finish_block",
                         "notes_block", "revision_table", "parts_list",
                         "border_zone")
@@ -358,7 +331,7 @@ CATEGORY = {
     "hole_table":            (KIND_CONTAINER, "hole",    "hole"),
     "feature_control_frame": (KIND_CONTAINER, "GD&T",    "gdt"),
     "datum_feature":         (KIND_ATOMIC,    "GD&T",    "datum"),
-    "datum_target":          (KIND_ATOMIC,    "GD&T",    "datum"),
+    "datum_target":          (KIND_ATOMIC,    "GD&T",    "datum_target"),
     "surface_finish":        (KIND_ATOMIC,    "finish",  "finish"),
     "weld_symbol":           (KIND_ATOMIC,    "finish",  None),
     "edge_condition":        (KIND_ATOMIC,    "dim",     "edge"),
@@ -378,25 +351,6 @@ CATEGORY = {
     "item_balloon":          (KIND_META,      None,      None),
     "other":                 (KIND_META,      None,      None),
 }
-
-
-SIMPLE_TPS = frozenset({"LINEAR", "DIAMETER", "RADIUS", "ANGLE", "DEPTH",
-                        "GDT", "FIT"})
-SIMPLE_REGION_CLASSES = frozenset({"dim_length", "dim_diameter",
-                                   "dim_radius", "dim_angular",
-                                   "feature_control_frame", "datum_feature"})
-
-
-def is_simple(cfg):
-    return bool(cfg) and cfg.get("mode") == "simple"
-
-
-def mode_admits_tp(tp, cfg):
-    return not is_simple(cfg) or tp in SIMPLE_TPS
-
-
-def mode_admits_region(cls, cfg):
-    return not is_simple(cfg) or cls in SIMPLE_REGION_CLASSES
 
 
 def admits(constraint, token):
@@ -422,7 +376,6 @@ def fnum(s):
     return float(s)
 
 
-# leading zero optional
 _DP_ONE_NUM = r"\d+(?:\.\d+)?|\.\d+"
 _DP_NUM_RE = re.compile(_DP_ONE_NUM)
 # fraction not limit pair
@@ -431,7 +384,6 @@ _DP_SLASH_RE = re.compile(r"(?<![\d.])(%s)\s*/\s*(%s)(?![\d.])"
 
 
 def dp_of(val):
-    """Ladder bucket for callout value."""
     if val is None:
         return None
     if isinstance(val, str):
@@ -464,15 +416,14 @@ def is_limit_value(val):
 
 
 def dp_tol(val, cfg, session=None):
-    """Config decimal-place ladder tolerance, or None."""
     if gentol_ladder(cfg, session) != "decimal":
         return None
-    if not (cfg or {}).get("dp_on"):     # master on/off
+    if not gentol_auto(cfg, session):
         return None
     d = dp_of(val)
     if d is None:
         return None
-    # decimal ladder is inch-only; a millimetre drawing uses ISO 2768
+    # decimal ladder inch-only
     tols = ((session or {}).get("dp_tols_inch")
             or (cfg or {}).get("dp_tols_inch") or {})
     cap = 4                              # inch reaches .XXXX
@@ -485,7 +436,6 @@ def dp_tol(val, cfg, session=None):
 
 
 def base_of(bubble):
-    # leading digits only
     m = re.match(r"\d+", str(bubble))
     return int(m.group(0)) if m else 0
 
@@ -515,7 +465,6 @@ def tol_text(d):
                       "0" if lo == 0 else "%+g" % lo)
 
 
-# ROUNDED difference
 ROUND_DP = 6
 
 # two-letter forms first (SR6 not S+R6)
@@ -523,9 +472,7 @@ REQ_PREFIXES = (u"S\u00d8", "SR", u"\u00d8", "R", "M", u"\u2220", u"\u25a1")
 
 
 def prefix_of(text):
-    """Leading requirement glyph of callout ("" when none)."""
     s = str(text or "").strip()
-    # strip repeat count
     s = re.sub(r"^\d+\s*[Xx\u00d7]\s*", "", s)
     for p in REQ_PREFIXES:
         if not s.startswith(p):
@@ -552,9 +499,14 @@ def requirement_text(nominal, tol_plus=None, tol_minus=None, prefix="",
     if nominal is None:
         return "GO/NOGO"
     dp = int(dp)
-    n = "%s%s" % (prefix or "", fmt_req_num(nominal, dp))
     if limit in ("max", "min"):
-        return "%s %s" % (n, limit.upper())
+        # printed number IS bound
+        if limit == "max":
+            b = round(float(nominal) + float(tol_plus or 0.0), 10)
+        else:
+            b = round(float(nominal) - float(tol_minus or 0.0), 10)
+        return "%s%s %s" % (prefix or "", fmt_req_num(b, dp), limit.upper())
+    n = "%s%s" % (prefix or "", fmt_req_num(nominal, dp))
     if tol_plus is None and tol_minus is None:
         return n
     if (tol_plus is not None and tol_minus is not None
@@ -562,7 +514,9 @@ def requirement_text(nominal, tol_plus=None, tol_minus=None, prefix="",
         return u"%s \u00b1%s" % (n, fmt_req_num(abs(float(tol_plus)), dp))
     out = n
     if tol_plus is not None:
-        out += " +%s" % fmt_req_num(float(tol_plus), dp)
+        # negative upper deviation stays `-`
+        up = float(tol_plus)
+        out += " %s%s" % ("-" if up < 0 else "+", fmt_req_num(abs(up), dp))
     if tol_minus is not None:
         lo = float(tol_minus)
         sep = "/" if tol_plus is not None else " "
@@ -572,20 +526,40 @@ def requirement_text(nominal, tol_plus=None, tol_minus=None, prefix="",
     return out
 
 
+_LIMIT_WORD = {"max": re.compile(r"\bMAX\b", re.I),
+               "min": re.compile(r"\bMIN\b", re.I)}
+
+
+def keeps_limit(row, limit):
+    if limit not in _LIMIT_WORD:
+        return False
+    feat = str(row.get("feature") or "")
+    if _LIMIT_WORD[limit].search(feat):
+        return True
+    other = "min" if limit == "max" else "max"
+    # finish MAX by convention
+    return (limit == "max" and str(row.get("type") or "").startswith("finish")
+            and not _LIMIT_WORD[other].search(feat))
+
+
 def tol_offsets(d):
     """(tol_plus, tol_minus) of ledger row, None side = UNBOUNDED."""
     d = d or {}
+    tmax, tmin = _tol_num(d.get("tol_max")), _tol_num(d.get("tol_min"))
+    # MAX/MIN ignores stray tol_sym
+    if d.get("limit") == "max":
+        return (tmax, None)
+    if d.get("limit") == "min":
+        return (None, None if tmin is None else -tmin)
     sym = _tol_num(d.get("tol_sym"))
     if sym is not None:
         return (abs(sym), abs(sym))
-    tmax, tmin = _tol_num(d.get("tol_max")), _tol_num(d.get("tol_min"))
     if tmax is not None and tmin is not None:
         return (max(tmax, tmin), -min(tmax, tmin))
     return (tmax, None if tmin is None else -tmin)
 
 
 def _tol_num(v):
-    """Tolerance cell as float, or None when blank."""
     if v is None or v == "":
         return None
     try:
@@ -595,19 +569,20 @@ def _tol_num(v):
 
 
 def limits_of(d):
-    """(low, high) acceptance limits of row, or None when unknown."""
     nom = d.get("nominal")
     if nom is None:
         return None
     lim = d.get("limit")
-    if lim == "max":                 # upper bound only
+    if lim == "max":
         return (None, nom + (_tol_num(d.get("tol_max")) or 0.0))
-    if lim == "min":                 # lower bound only
+    if lim == "min":
         return (nom + (_tol_num(d.get("tol_min")) or 0.0), None)
-    if d.get("tol_sym") is not None:
-        s = abs(d["tol_sym"])
+    sym = _tol_num(d.get("tol_sym"))
+    if sym is not None:
+        s = abs(sym)
         return (nom - s, nom + s)
-    tmax, tmin = d.get("tol_max"), d.get("tol_min")
+    # cells may hold text
+    tmax, tmin = _tol_num(d.get("tol_max")), _tol_num(d.get("tol_min"))
     if tmax is None and tmin is None:
         return None
     hi = tmax if tmax is not None else 0.0
@@ -615,12 +590,8 @@ def limits_of(d):
     return (nom + min(lo, hi), nom + max(lo, hi))
 
 
-# ops are MACHINING STAGES
-
-# method vocabulary
 METHODS = ("CMM", "probe", "GO-NOGO", "visual", "caliper")
 
-# gage name -> method
 _GAGE_METHOD = {"cmm": "CMM", "micrometer": "caliper", "caliper": "caliper",
                 "height gauge": "CMM", "go gauge": "GO-NOGO",
                 "pin": "GO-NOGO", "screw test": "GO-NOGO",
@@ -628,7 +599,6 @@ _GAGE_METHOD = {"cmm": "CMM", "micrometer": "caliper", "caliper": "caliper",
 
 
 def method_for_gage(gage):
-    """Method gage name implies, "" when unknown."""
     g = str(gage or "").strip().lower()
     if not g:
         return ""
@@ -640,12 +610,10 @@ def method_for_gage(gage):
     return ""
 
 
-# methods naming no instrument
 _METHOD_ONLY = ("GO-NOGO", "visual")
 
 
 def split_method_gage(text, fallback_gage=None):
-    """One typed "how measured" -> (method, gage)."""
     txt = str(text or "").strip()
     if not txt:
         return ("", fallback_gage or None)
@@ -656,7 +624,6 @@ def split_method_gage(text, fallback_gage=None):
 
 
 def op_natkey(name):
-    """Natural sort key so op2 before op10."""
     out = []
     for part in re.split(r"(\d+)", str(name or "")):
         if part == "":
@@ -667,7 +634,6 @@ def op_natkey(name):
 
 
 def merge_op_seq(seq, names=()):
-    """Explicit sequence plus any unlisted op appended."""
     out = [str(x) for x in (seq or []) if str(x).strip()]
     extra = sorted({str(n) for n in (names or []) if str(n) not in out},
                    key=op_natkey)
@@ -675,7 +641,6 @@ def merge_op_seq(seq, names=()):
 
 
 def op_rank(name, seq=None):
-    """Sort key of one op, unlisted sort last by name."""
     seq = merge_op_seq(seq if seq is not None else OPS_DEFAULT)
     name = str(name or "")
     if name in seq:
@@ -684,7 +649,6 @@ def op_rank(name, seq=None):
 
 
 def has_reading(rec):
-    """Whether op has any reading."""
     rec = rec or {}
     if rec.get("readings"):
         return True
@@ -692,11 +656,10 @@ def has_reading(rec):
 
 
 def op_value(rec, d=None):
-    """Headline value of one op record."""
     rec = rec or {}
     readings = rec.get("readings")
     if readings:
-        return worst_reading(readings, d or {})
+        return combine_readings(readings, d or {}, rec.get("combine"))
     return rec.get("measured")
 
 
@@ -708,7 +671,6 @@ def ops_in_order(ops, seq=None):
 
 
 def latest_op(ops, seq=None):
-    """(name, record) of LAST op in SEQUENCE with reading."""
     if not ops:
         return None
     done = [kv for kv in ops_in_order(ops, seq) if has_reading(kv[1])]
@@ -723,13 +685,11 @@ def made_at(d):
 
 
 def machined_ops(d):
-    """Op that CUT feature, as list for sequence merge."""
     m = made_at(d)
     return [m] if m else []
 
 
 def carried_forward(d, op, seq=None):
-    """(op, value) already signed off at EARLIER op, or None."""
     ops = (d or {}).get("ops") or {}
     full = merge_op_seq(seq if seq is not None else OPS_DEFAULT,
                         list(ops) + machined_ops(d) + [op])
@@ -742,7 +702,6 @@ def carried_forward(d, op, seq=None):
 
 
 def op_scope(d, op, seq=None):
-    """Why characteristic listed at op."""
     ops = (d or {}).get("ops") or {}
     full = merge_op_seq(seq if seq is not None else OPS_DEFAULT,
                         list(ops) + machined_ops(d) + [op])
@@ -760,7 +719,6 @@ def op_scope(d, op, seq=None):
 
 
 def band_center(d):
-    """Midpoint of acceptance band, nominal when no band."""
     lim = limits_of(d)
     if lim is not None:
         return (lim[0] + lim[1]) / 2.0
@@ -776,7 +734,6 @@ def _as_float(s):
 
 
 def worst_reading(values, d):
-    """Worst of several qty readings."""
     vals = [str(v).strip() for v in (values or []) if str(v).strip() != ""]
     if not vals:
         return None
@@ -793,8 +750,67 @@ def worst_reading(values, d):
     return max(numeric, key=lambda vf: abs(vf[1] - c))[0]
 
 
+def combine_readings(values, d, how="worst"):
+    """Worst, or mean. A no-go always wins."""
+    if how != "average":
+        return worst_reading(values, d)
+    vals = [str(v).strip() for v in (values or []) if str(v).strip() != ""]
+    if not vals:
+        return None
+    for v in vals:
+        if v.upper() in NOGO_WORDS:
+            return v
+    pairs = [(v, _as_float(v)) for v in vals]
+    pairs = [(v, f) for v, f in pairs if f is not None]
+    if not pairs:
+        return vals[0]
+    # one digit past the readings
+    dp = max(len(v.replace(",", ".").partition(".")[2]) for v, _ in pairs)
+    mean = sum(f for _, f in pairs) / len(pairs)
+    return ("%%.%df" % (dp + 1)) % mean
+
+
+def count_rows_of(d, ledger=()):
+    """Count rows owned by d."""
+    key = d.get("bgroup") or d.get("uid")
+    b, pg = base_of(d.get("bubble")), d.get("page")
+
+    def same(r):
+        if key is not None and (r.get("bgroup") or r.get("uid")) == key:
+            return True
+        return (r.get("page") == pg and b not in (None, "")
+                and base_of(r.get("bubble")) == b)
+    group = [r for r in ledger or () if same(r)]
+    rows = [r for r in group if r.get("facet") == "qty"]
+    own = d.get("rkey")
+    mine = [r for r in rows if own and r.get("qty_of") == own]
+    if mine:
+        return mine
+    owners = [r for r in group if r.get("facet") != "qty"
+              and int(r.get("qty") or 1) > 1]
+    loose = [r for r in rows if not r.get("qty_of")]
+    if len(owners) <= 1:
+        return loose
+    # merged group: count matches own qty
+    n = int(d.get("qty") or 1)
+    return [r for r in loose if r.get("nominal") == float(n)][:1]
+
+
+def qty_readings(d, ledger=()):
+    """Readings to take: N only when the count is bubbled."""
+    n = int((d or {}).get("qty") or 1)
+    if n < 2 or d.get("facet") == "qty":
+        return 1
+    if count_rows_of(d, ledger):
+        return n
+    # measured N times before the rule
+    if any(len((rec or {}).get("readings") or ()) > 1
+           for rec in (d.get("ops") or {}).values()):
+        return n
+    return 1
+
+
 def mirror_measured(d, seq=None):
-    """Headline value = LAST machining stage measuring feature."""
     ops = d.get("ops")
     if not ops:
         return d.get("measured")
@@ -803,7 +819,6 @@ def mirror_measured(d, seq=None):
     return d["measured"]
 
 
-# attribute vocabulary ONE place
 NOGO_WORDS = ("NOGO", "NO-GO", "NO GO", "NOK", "FAIL", "NIE")
 GO_WORDS = ("GO", "OK", "TAK", "PASS")
 
@@ -842,7 +857,6 @@ def out_of_tol(d):
 
 
 def oot_rows(ledger, cfg=None):
-    """Ordered out-of-tol rows (measured OOT or NOGO) as flat report dicts."""
     seq = ops_seq(cfg or {})
     rows = []
     for d in ledger:

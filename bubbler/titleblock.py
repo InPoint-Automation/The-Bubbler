@@ -42,8 +42,23 @@ def _match_label(tokens):
     return None
 
 
+def default_rect(r):
+    """Bottom-right 45% x 28% guess. Eval uses same."""
+    x0, y0, x1, y1 = r
+    w, h = x1 - x0, y1 - y0
+    return (x0 + 0.55 * w, y0 + 0.72 * h, x1, y1)
+
+
 def parse_titleblock(words):
-    """Word tuples in displayed coords to {cell: value}."""
+    from .reader.layout import words_by_frame
+    out = {}
+    for _q, fw in words_by_frame(words):
+        for cell, val in _parse_level(fw).items():
+            out.setdefault(cell, val)
+    return out
+
+
+def _parse_level(words):
     ws = [w for w in words if str(w[4]).strip()]
     n = len(ws)
     label_idx = set()

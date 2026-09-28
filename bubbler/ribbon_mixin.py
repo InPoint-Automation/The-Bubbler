@@ -3,17 +3,19 @@
 #
 # Office-style ribbon toolbar mixed into MainWindow.
 
+import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QComboBox, QCheckBox, QDoubleSpinBox,
                                QPushButton, QSizePolicy)
 
-from .common import TYPES, TIERS, is_simple
-from .config import gentol_ladder, units_of
-from .scanlib import (GENTOL_SRC_BAND, GENTOL_SRC_BLOCK, GENTOL_SRC_FRAC,
-                      GENTOL_SRC_LADDER_DP, GENTOL_SRC_LADDER_ISO,
-                      GENTOL_SRC_NONE, GENTOL_SRC_STD, GENTOL_SRC_USER,
-                      gentol_readout)
+from .common import TYPES, TIERS
+from .config import gentol_auto, gentol_ladder, leaders_on, units_of
+from .gentol import (GENTOL_SRC_BAND, GENTOL_SRC_BLOCK, GENTOL_SRC_FRAC,
+                     GENTOL_SRC_LADDER_DP, GENTOL_SRC_LADDER_ISO,
+                     GENTOL_SRC_NONE, GENTOL_SRC_STD, GENTOL_SRC_USER,
+                     gentol_readout)
 from .widgets import fill_keyed, combo_key
 from .icons import icon_button, make_icon, menu_button
 from .theme import OFFICE
@@ -21,7 +23,7 @@ from .i18n import tr
 
 
 class RibbonMixin:
-    def _rib_group(self, caption, widgets):
+    def _rib_group(self, caption, widgets, under=None):
         g = QWidget()
         g.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Expanding)
         v = QVBoxLayout(g)
@@ -34,6 +36,8 @@ class RibbonMixin:
         for w in widgets:
             row.addWidget(w)
         v.addWidget(roww, 0, Qt.AlignTop)
+        if under is not None:
+            v.addWidget(under, 0, Qt.AlignLeft)
         v.addStretch(1)
         cap = QLabel(tr(caption))
         cap.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
@@ -52,18 +56,31 @@ class RibbonMixin:
 
         self.btn_save = icon_button("save", self.save, "Save  Ctrl+S",
                                     "Save")
-        # close-out own explicit action
         self.btn_runs = menu_button(
             "report", "Inspection run", "Run", items=[
-                ("report", "Issue report", self.issue_report),
-                ("check", "Issue and close out inspection",
-                 self.issue_and_close),
                 ("check", "Close out inspection...", self.close_out),
                 ("add", "Start a new run", self.start_new_run),
-                ("pages", "Switch run...", self.switch_run)])
+                ("pages", "Switch run...", self.switch_run),
+                None,
+                ("report", "OOT report", self.oot_report),
+                ("report", "Statistics across runs...", self.run_stats),
+                ("import", "Import CMM/CSV", self.cmm_import),
+                ("report", "Report bad read...", self.report_bad_read),
+                ("import", "Review corrections...",
+                 self.review_corrections),
+                ("import", "3D preview...", self.show_step_preview)])
+        self.btn_open = icon_button("import", self._open_new_window,
+                                    "Open a drawing in a new window",
+                                    "Open")
+        self.btn_preview = icon_button("search", self.preview_output,
+                                       "Preview or print output", "Preview")
         tb.addWidget(self._rib_group(tr('File'), [
-            self.btn_save, self.btn_runs,
-            icon_button("header", self.header_editor, "Header", "Header"),
+            self.btn_save, self.btn_open, self.btn_preview, self.btn_runs,
+            icon_button("header", self.header_editor,
+                        "Header and run: the part, and this run's serial, "
+                        "inspector, date, type and report",
+                        # short, PL ribbon full
+                        "Header"),
             menu_button("settings", "Options", "Options", items=[
                 ("settings", "Settings", self.settings),
                 ("help", "Keybinds  F1", self.show_keys)])]))
@@ -78,12 +95,10 @@ class RibbonMixin:
         self.btn_nav = icon_button("pages", self.toggle_nav,
                                    "Page navigator", "Pages", toggle=True)
         self.btn_nav.setEnabled(self.doc.page_count > 1)
-        # button not label
         self.lbl_gentol = QPushButton("")
         self.lbl_gentol.setProperty("i18n_skip", True)
         self.lbl_gentol.setFlat(True)
         self.lbl_gentol.setCursor(Qt.PointingHandCursor)
-        # drop button default padding
         self.lbl_gentol.setSizePolicy(QSizePolicy.Maximum,
                                       QSizePolicy.Preferred)
         self.lbl_gentol.setMinimumWidth(0)
@@ -125,17 +140,9 @@ class RibbonMixin:
             icon_button("undo", self.undo, "Undo  Ctrl+Z", "Undo"),
             self.btn_measure, self.btn_calc, self.btn_panel,
             self.btn_scan, self.btn_scan_all]))
-        tb.addSeparator()
-        tb.addWidget(self._rib_group(tr('Data'), [
-            menu_button("report", "Reports and data import", "Data", items=[
-                ("report", "OOT report", self.oot_report),
-                ("import", "Import CMM/CSV", self.cmm_import),
-                ("report", "Report bad read...", self.report_bad_read),
-                ("import", "Review corrections...",
-                 self.review_corrections),
-                ("report", "Preview or print output...",
-                 self.preview_output),
-                ("import", "3D preview...", self.show_step_preview)])]))
+        # hidden until page scan reworked
+        self.btn_scan.setVisible(False)
+        self.btn_scan_all.setVisible(False)
         tb.addSeparator()
         self.btn_tool_add = icon_button("add", lambda: self.set_tool("add"),
                                         "Add bubbles  A", "Add", toggle=True)
@@ -161,6 +168,7 @@ class RibbonMixin:
         fill_keyed(self.cb_type, TYPES, self.last["type"])
         self.cb_type.setMaximumWidth(110)
         self.cb_type.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_type.setMinimumContentsLength(6)        # was a sliver
         self.cb_type.activated.connect(
             lambda _i: self._rib_set("type", combo_key(self.cb_type)))
 
@@ -194,9 +202,8 @@ class RibbonMixin:
         self.cb_tier.setMaximumWidth(70)
         self.cb_tier.activated.connect(
             lambda _i: self._rib_set("tier", combo_key(self.cb_tier)))
-        # icon only
         self.btn_rib_reset = icon_button("rotate", self.reset_ribbon,
-                                         "Reset these to defaults")
+                                         "Clear the tolerances")
         tb.addWidget(self._rib_group(tr('Next bubble'), [
             self._field(tr('type'), self.cb_type),
             self._iso_field,
@@ -204,14 +211,13 @@ class RibbonMixin:
             self._field("tol ±", self.e_tsym),
             self._field("tol max", self.e_tmax),
             self._field("tol min", self.e_tmin),
-            self._field("tier", self.cb_tier),
-            self.lbl_gentol,
-            self._field("", self.btn_rib_reset)]))
+            self._field("", self.btn_rib_reset),
+            self._field("tier", self.cb_tier)], under=self.lbl_gentol))
         self._sync_gentol()
         tb.addSeparator()
 
         self.chk_lead = QCheckBox(tr('Leaders'))
-        self.chk_lead.setChecked(bool(self.cfg.get("leaders")))
+        self.chk_lead.setChecked(leaders_on(self.cfg, self.drawing))
         self.chk_lead.toggled.connect(self._lead_changed)
         self.sp_rad = QDoubleSpinBox()
         self.sp_rad.setRange(3, 40)
@@ -233,10 +239,12 @@ class RibbonMixin:
             self._field("font", self.sp_fsz)]))
         if self.cfg.get("vision_debug_overlay"):
             tb.addWidget(self._debug_ribbon_group())
-        self._apply_mode()
+
+    def _open_new_window(self):
+        from .launcher import open_new_window  # avoid import cycle
+        return open_new_window(self.cfg, self)
 
     def _debug_ribbon_group(self):
-        """debug overlay control"""
         from PySide6.QtWidgets import QToolButton, QMenu
         # saves ribbon width
         b = QToolButton()
@@ -265,20 +273,34 @@ class RibbonMixin:
         b._menu = m
         return self._rib_group(tr('Debug'), [b])
 
-    # source -> readout name
-    _GENTOL_SRC = {
-        GENTOL_SRC_BAND: "band table",
-        GENTOL_SRC_BLOCK: "printed .X block",
-        GENTOL_SRC_FRAC: "printed fractions",
-        GENTOL_SRC_STD: "ISO 2768",
-        GENTOL_SRC_LADDER_DP: "settings ladder",
-        GENTOL_SRC_LADDER_ISO: "settings ISO 2768",
-        GENTOL_SRC_NONE: "no general tol",
-        GENTOL_SRC_USER: "corrected by hand",
+    # who set it: print, Settings, hand
+    _GENTOL_PREFIX = {
+        GENTOL_SRC_BAND: "Print", GENTOL_SRC_BLOCK: "Print",
+        GENTOL_SRC_FRAC: "Print", GENTOL_SRC_STD: "Print",
+        GENTOL_SRC_LADDER_DP: "Settings", GENTOL_SRC_LADDER_ISO: "Settings",
+        GENTOL_SRC_USER: "Manual",
     }
 
+    def _gentol_text(self, src, val, g):
+        """One line: "Print: ISO 2768-f"."""
+        if src == GENTOL_SRC_NONE or src not in self._GENTOL_PREFIX:
+            return tr('No general tolerance')
+        m = re.match(r"^-(\w+)\s+by nominal$", (val or "").strip())
+        if m:
+            geom = ((g or {}).get("iso_geom") or ""
+                    if src == GENTOL_SRC_STD else "")
+            body = "ISO 2768-%s%s" % (m.group(1), geom)
+        elif src == GENTOL_SRC_STD:
+            body = "ISO 2768"
+        elif src == GENTOL_SRC_BAND:
+            body = "%s %s" % (tr('band table'), val)
+        elif src == GENTOL_SRC_FRAC:
+            body = "%s %s" % (tr('fractions'), val)
+        else:
+            body = val
+        return "%s: %s" % (tr(self._GENTOL_PREFIX[src]), body)
+
     def _sync_gentol(self):
-        """which general tolerance owns current page"""
         lbl = getattr(self, "lbl_gentol", None)
         if lbl is None:
             return
@@ -286,41 +308,47 @@ class RibbonMixin:
             g = self._page_gtols()
         except Exception:
             g = {}
-        src, val, inh = gentol_readout(g, self.cfg, self.drawing)
-        name = tr(self._GENTOL_SRC.get(src, src))
-        line2 = (tr('inherited') + "  " + val).strip() if inh else val
-        lbl.setText(("%s  %s\n%s" % (tr('gen tol'), name, line2)).strip())
+        src, val, inh = gentol_readout(
+            g, self.cfg, self.drawing,
+            icls=(getattr(self, "last", None) or {}).get("icls"))
         fixed = src == GENTOL_SRC_USER
+        # scan read, doubtful as inherited
+        ocr = bool((g or {}).get("ocr")) and not fixed
+        text = self._gentol_text(src, val, g)
+        if inh:
+            text += "  (%s)" % tr('inherited')
+        if ocr:
+            text += "  (%s)" % tr('OCR')
+        lbl.setText(text)
         lbl.setStyleSheet(
             "font-size:7pt; padding:0px 2px 0px 5px; margin:0px;"
             "border:none; background:transparent; text-align:left; color:%s;"
             % ("#2b6cb0" if fixed else
-               "#b7791f" if inh else OFFICE["muted"]))
-        if fixed:
+               "#b7791f" if (inh or ocr) else OFFICE["muted"]))
+        from .gentol import gentol_override
+        if fixed and gentol_override(self.drawing) is None:
+            tip = tr('ISO 2768 class picked by hand for this drawing. '
+                     'Pick the printed class on the ribbon to go back.')
+        elif fixed:
             tip = tr('Hand-corrected for this drawing. Click to change.')
+        elif ocr:
+            tip = tr('Read by OCR from the scanned drawing: check it '
+                     'against the print. Click to correct.')
         elif inh:
             tip = tr('From page 1, reused here. Click to correct.')
         else:
-            tip = tr('The general tolerance the next bubble inherits on this '
-                     'page. Click to correct.')
+            tip = tr('The general tolerance for this page. '
+                     'Click to correct.')
         lbl.setToolTip(tip)
 
-    def _apply_mode(self):
-        simple = is_simple(self.cfg)
-        for b in (getattr(self, "btn_scan", None),
-                  getattr(self, "btn_scan_all", None)):
-            if b is not None:
-                b.setVisible(not simple)
-
     def _sync_units_controls(self):
-        # names one ladder
         asme = units_of(self.cfg, self.drawing) == "asme_inch"
         if gentol_ladder(self.cfg, self.drawing) == "decimal":
             src, tip = "Y14.5 tol", "ASME title-block decimal-place tolerance"
-            on = bool(self.cfg.get("dp_on"))
+            on = gentol_auto(self.cfg, self.drawing)
         else:
             src, tip = "ISO 2768", "ISO 2768 auto"
-            on = bool(self.cfg.get("rib_iso_on"))
+            on = gentol_auto(self.cfg, self.drawing)
         self.chk_iso.setProperty("i18n_src", src)
         self.chk_iso.setText(tr(src))
         self.chk_iso.setToolTip(tr(tip))
@@ -328,8 +356,8 @@ class RibbonMixin:
         self.chk_iso.setChecked(on)
         self.chk_iso.blockSignals(False)
         self._icls_field.setVisible(not asme)
-        self._sync_gentol()          # ladder decides readout too
-        self._fill_munits()          # "other" is other system
+        self._sync_gentol()
+        self._fill_munits()
 
     def _field(self, label, widget, top=None):
         w = QWidget()

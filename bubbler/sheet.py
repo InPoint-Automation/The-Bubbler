@@ -22,12 +22,15 @@ from .sheet_build import (BANNER_CELL, FORMULA_COLS, HEAD_ROW, LABEL_ROWS,
                           apply_print_setup, banner_text,
                           build_workbook, column_letters, dropdown_specs,
                           header_dropdown_spec,
-                          generation_of, header_fields, label_cells,
+                          generation_of, gage_names, header_fields,
+                          label_cells,
                           number_formats, result_range,
                           row_height,
                           stamp_generation)
 
-# author stamp on Bubbler's own cell note
+# marks gage list as ours
+GAGE_LIST_MARK = "Bubbler gages"
+
 NOTE_AUTHOR = "Bubbler"
 CONFLICT_NOTE = "Bubbler read"
 
@@ -44,7 +47,6 @@ def ensure_xlsx(path, company="", sheet_lang="both", units="iso_mm"):
     return True
 
 
-# every possible sheet language
 SHEET_LANGS = ("both", "en") + tuple(available_langs())
 
 # "requirement" header renderings mark GEN-3 layout
@@ -52,7 +54,6 @@ _REQUIREMENT_HEADERS = {sheet_label("requirement", l) for l in SHEET_LANGS}
 
 
 def _vocab():
-    """Every rendering of TYPE/TIER value -> English key."""
     out = {}
     for key in list(TYPES) + [t for t in TIERS if t]:
         for lang in SHEET_LANGS:
@@ -63,14 +64,12 @@ def _vocab():
 VOCAB = _vocab()
 
 
-# RENAMED label -> old keys it was spelled under
+# renamed label -> old keys
 RETIRED_LABEL_KEYS = {"Inspection type": ("FAI type",),
-                      # FAIR = report only
                       "Report #": ("FAIR #",)}
 
 
 def _renderings(key):
-    """Every rendering of one label key, all languages."""
     out = set()
     for k in (key,) + tuple(RETIRED_LABEL_KEYS.get(key, ())):
         out.update(sheet_value(k, lang) for lang in SHEET_LANGS)
@@ -79,10 +78,9 @@ def _renderings(key):
 
 
 class SheetWriter(object):
-    # ledger keys app WRITES, in layout order
     WRITTEN_KEYS = ("bubble", "feature", "requirement", "measured", "type",
-                    "method", "tier", "gage")
-    # ------------------------------------------------- who owns which column
+                    "method", "tier", "gage", "comments")
+    # add-only, cell wins conflict
     HUMAN_KEYS = ("measured", "gage")
     LOC_KEYS = {"type", "tier", "method"}
 
@@ -92,16 +90,12 @@ class SheetWriter(object):
                  type_column=False, units="iso_mm", cfg=None):
         self.path = path
         self.sheet_lang = sheet_lang or "both"
-        # units+cfg let write_row match report string
         self.units = units if units in UNIT_TEXT else "iso_mm"
         self.cfg = dict(cfg or {})
-        # sheet_tier_designator: tier maps to designator col
         self.tier_designator = bool(tier_designator)
-        # sheet_tier_column: does tier reach sheet
         self.tier_column = bool(tier_column)
         # Inspection type dropdown names (H6)
         self.inspections = tuple(inspections or ())
-        # which OPTIONAL columns layout carries
         self.flags = {
             "sheet_tier_designator": self.tier_designator,
             "sheet_tier_column": self.tier_column,
@@ -113,7 +107,6 @@ class SheetWriter(object):
         }
         self.cols = active_columns(self.flags)
         self.col_of = {col.key: letter for letter, col in self.cols}
-        # (letter, ledger key) per app-written column
         self.COLS = tuple((self.col_of[k], k) for k in self.WRITTEN_KEYS
                           if k in self.col_of)
         self.NUMCOLS = frozenset(letter for letter, col in self.cols
@@ -131,22 +124,24 @@ class SheetWriter(object):
         self.ws = self.wb[SHEET]
         self._repair()
 
-    # ------------------------------------------------ legacy repair
     def _repair(self):
         """Bring older workbook up to date, idempotent."""
         self._fix_dropdowns()
+        self._fix_gage_list()
         self._fix_inspections()
         self._fix_rules()
         self._fix_vocab()
         self._fix_labels()
+        self._fix_summary()
+        self._fix_hi_helpers()
         if generation_of(self.wb) is None:
-            stamp_generation(self.wb)      # current layout, old file
+            stamp_generation(self.wb)
 
     def _fix_dropdowns(self):
         have = self.ws.data_validations.dataValidation
         for col, ref, values in dropdown_specs(self.sheet_lang, self.flags):
             if any(v.type == "list" and _covers(v.sqref, col) for v in have):
-                continue                 # keep existing
+                continue
             v = DataValidation(type="list", allow_blank=True,
                                formula1='"%s"' % ",".join(values),
                                showDropDown=False, showErrorMessage=False,
@@ -154,8 +149,30 @@ class SheetWriter(object):
             v.sqref = ref
             self.ws.add_data_validation(v)
 
+    def _fix_gage_list(self):
+        """Refreshed, foreign list left alone."""
+        col = self.col_of.get("gage")
+        values = gage_names(self.cfg)
+        if not col or not values:
+            return
+        for v in list(self.ws.data_validations.dataValidation):
+            if v.type != "list" or not _covers(v.sqref, col):
+                continue
+            if v.promptTitle != GAGE_LIST_MARK:
+                return
+            if _list_values(v.formula1) == list(values):
+                return
+            # ours by mark, not words
+            self.ws.data_validations.dataValidation.remove(v)
+        dv = DataValidation(type="list", allow_blank=True,
+                            formula1='"%s"' % ",".join(values),
+                            showDropDown=False, showErrorMessage=False,
+                            showInputMessage=False,
+                            promptTitle=GAGE_LIST_MARK)
+        dv.sqref = "%s%d:%s%d" % (col, FIRST_ROW, col, LAST_ROW)
+        self.ws.add_data_validation(dv)
+
     def _fix_inspections(self):
-        """Keep H6 dropdown listing today's presets."""
         spec = header_dropdown_spec(self.inspections)
         if not spec:
             return
@@ -166,9 +183,9 @@ class SheetWriter(object):
                 continue
             was = _list_values(v.formula1)
             if set(was) - mine:
-                return                   # foreign list, hands off
+                return
             if was == list(values):
-                return                   # already current
+                return
             self.ws.data_validations.dataValidation.remove(v)
         dv = DataValidation(type="list", allow_blank=True,
                             formula1='"%s"' % ",".join(values),
@@ -180,7 +197,7 @@ class SheetWriter(object):
     def _fix_rules(self):
         for rng in self.ws.conditional_formatting:
             if _covers(rng.sqref, RESULT_COL) and rng.rules:
-                return                   # already coloured, edits kept
+                return
         for word, colour in RESULT_RULES:
             self.ws.conditional_formatting.add(result_range(), CellIsRule(
                 operator="equal", formula=['"%s"' % word],
@@ -188,7 +205,6 @@ class SheetWriter(object):
                                  fill_type="solid")))
 
     def _fix_vocab(self):
-        """One vocabulary per column, re-render known type/tier."""
         for col, key in self.COLS:
             if key not in self.LOC_KEYS:
                 continue
@@ -196,13 +212,12 @@ class SheetWriter(object):
                 c = self.ws["%s%d" % (col, r)]
                 en = VOCAB.get(c.value) if isinstance(c.value, str) else None
                 if en is None:
-                    continue             # blank or user-typed
+                    continue
                 want = sheet_value(en, self.sheet_lang)
                 if c.value != want:
                     c.value = want
 
     def _fix_labels(self):
-        """Static labels follow export language, like data."""
         for cell, key in label_cells(self.flags):
             c = self.ws[cell]
             want = sheet_label(key, self.sheet_lang)
@@ -214,8 +229,50 @@ class SheetWriter(object):
         self._fix_label_rows()
         self._fix_banner()
 
+    def _fix_summary(self):
+        """Empty or our formula only, hand edits kept."""
+        from copy import copy
+        from .sheet_build import (SUMMARY_LABELS, SUMMARY_FORMATS,
+                                  YIELD_FORMULA, disposition_formula,
+                                  summary_formulas, full_letter_of,
+                                  chars_formulas_before)
+        ws = self.ws
+        style = ws["A8"]
+        for cell, key in SUMMARY_LABELS:
+            if ws[cell].value is None:
+                ws[cell] = sheet_label(key, self.sheet_lang)
+                ws[cell].font = copy(style.font)
+                ws[cell].alignment = copy(style.alignment)
+        if ws["H8"].value is None:
+            ws["H8"] = YIELD_FORMULA
+            ws["H8"].font = copy(style.font)
+        if ws["H8"].value == YIELD_FORMULA:
+            ws["H8"].number_format = SUMMARY_FORMATS["H8"]
+        chars = dict(summary_formulas(full_letter_of(self.flags)))["B8"]
+        if ws["B8"].value in chars_formulas_before(chars):
+            ws["B8"] = chars
+        want = disposition_formula(self.sheet_lang)
+        ours = {disposition_formula(lang) for lang in SHEET_LANGS}
+        if ws["J8"].value is None or ws["J8"].value in ours:
+            if ws["J8"].value != want:
+                ws["J8"] = want
+                ws["J8"].font = copy(style.font)
+
+    def _fix_hi_helpers(self):
+        """Old helper missed negative upper deviation."""
+        from .sheet_build import (full_letter_of, req_hi_formula,
+                                  req_hi_formula_v1)
+        lt = full_letter_of(self.flags)
+        if not all(k in lt for k in ("_nom", "_tol", "_up", "_hi")):
+            return
+        for r in range(FIRST_ROW, LAST_ROW + 1):
+            nom, tol, up = ("%s%d" % (lt[k], r)
+                            for k in ("_nom", "_tol", "_up"))
+            c = self.ws["%s%d" % (lt["_hi"], r)]
+            if c.value == req_hi_formula_v1(nom, tol, up):
+                c.value = req_hi_formula(nom, tol, up)
+
     def _fix_label_rows(self):
-        """Label rows taller when labels stack two lines."""
         for r in tuple(LABEL_ROWS) + (SUMMARY_ROW, HEAD_ROW):
             self.ws.row_dimensions[r].height = row_height(self.sheet_lang)
 
@@ -252,7 +309,6 @@ class SheetWriter(object):
         return changed
 
     def set_report_id(self, rid):
-        """Stamp run's report id, True when changed."""
         rid = str(rid or "").strip()
         if not rid:
             return False                 # never blank stamped id
@@ -263,7 +319,6 @@ class SheetWriter(object):
         return True
 
     def report_id(self):
-        """Id stamped on sheet, "" when none."""
         return str(self.ws[REPORT_CELL].value or "").strip()
 
     def get_header(self):
@@ -274,7 +329,6 @@ class SheetWriter(object):
         for cell, v in values.items():
             self.ws[cell] = v
 
-    # ---------------------------------------------- ingest human edits
     # human-authored columns -> ledger key, read on OPEN
     READ_KEYS = {"measured": "measured", "gage": "gage",
                  "comments": "comment", "ncr": "ncr", "refzone": "refzone"}
@@ -292,7 +346,6 @@ class SheetWriter(object):
         return out
 
     def _row_free(self, r):
-        """Is row `r` empty across EVERY writable column?"""
         for col in self.CLEAR_COLS:
             if self.ws["%s%d" % (col, r)].value not in (None, ""):
                 return False
@@ -305,7 +358,6 @@ class SheetWriter(object):
         return None
 
     def free_rows(self):
-        """Unused rows (new-bubble capacity)."""
         return sum(1 for r in range(FIRST_ROW, LAST_ROW + 1)
                    if self._row_free(r))
 
@@ -315,7 +367,6 @@ class SheetWriter(object):
         return "'" + s if s[:1] in ("=", "+", "-", "@") else s
 
     def write_row(self, r, d):
-        """Push one ledger row into sheet, per ownership rule."""
         row = Row.from_ledger(d, self.cfg, self.units)
         for col, key in self.COLS:
             if key == "requirement":
@@ -323,9 +374,13 @@ class SheetWriter(object):
             elif key == "method":
                 v = row.method or None
             else:
-                v = d.get(key, None)
+                v = d.get(_KEY_OF_COL.get(key, key), None)
             if key in self.LOC_KEYS and v not in (None, ""):
                 v = sheet_value(str(v), self.sheet_lang)
+            if key == "comments":
+                # as written, tells human edit apart
+                d["sheet_comment"] = (self._safe_text(v)
+                                      if v not in (None, "") else "")
             if col == self.TIER_COL:
                 self._set_tier(r, v if self.writes_tier else None)
             elif col in self.HUMAN_COLS:
@@ -338,7 +393,6 @@ class SheetWriter(object):
 
     @property
     def writes_tier(self):
-        """Tier reaches column M, designator column off."""
         return self.tier_column and not self.tier_designator
 
     def _put(self, r, col, v):
@@ -352,14 +406,13 @@ class SheetWriter(object):
             cell.value = self._safe_text(v)
 
     def _num_or_text(self, v):
-        """Numeric if parses else escaped text."""
         try:
             return float(str(v).replace(",", "."))
         except ValueError:
             return self._safe_text(v)
 
     def _set_tier(self, r, v):
-        """Column M: owned over tier vocabulary only."""
+        """Owned over tier vocabulary only."""
         c = self.ws["%s%d" % (self.TIER_COL, r)]
         cur = c.value
         if cur not in (None, "") and VOCAB.get(str(cur).strip()) not in TIERS:
@@ -371,7 +424,7 @@ class SheetWriter(object):
         c = self.ws["%s%d" % (col, r)]
         cur = c.value
         if v in (None, ""):
-            return                       # nothing to add/erase
+            return
         new = self._num_or_text(v) if key == "measured" else self._safe_text(v)
         if cur in (None, "") or cur == new:
             c.value = new
@@ -380,7 +433,6 @@ class SheetWriter(object):
             self._note(c, new)
 
     def _note(self, cell, value):
-        """Leave unwritten reading on cell."""
         cur = cell.comment
         if cur is not None and cur.author != NOTE_AUTHOR:
             return                       # foreign note stays
@@ -390,13 +442,11 @@ class SheetWriter(object):
 
     @staticmethod
     def _drop_note(cell):
-        """Drop stale conflict note once agree."""
         cur = cell.comment
         if cur is not None and cur.author == NOTE_AUTHOR:
             cell.comment = None
 
     def _set_designator(self, r, tier):
-        """Map balloon tier onto R designator column."""
         c = self.ws["%s%d" % (self.DESIGNATOR_COL, r)]
         cur = c.value
         if cur not in (None, "") and str(cur).strip() not in OWNED_DESIGNATORS:
@@ -404,15 +454,14 @@ class SheetWriter(object):
         c.value = TIER_DESIGNATOR.get(str(tier or "").strip()) or None
 
     def clear_row(self, r):
-        """Free entire row A..T, every column."""
+        """Every column, row gets recycled."""
         for col in self.CLEAR_COLS:
             cell = self.ws["%s%d" % (col, r)]
             cell.value = None
-            cell.comment = None          # note part of record
+            cell.comment = None
         # built formulas read blank on their own
 
     def last_used_row(self):
-        """Highest row with bubble number, floor FIRST_ROW."""
         last = FIRST_ROW
         for r in range(FIRST_ROW, LAST_ROW + 1):
             if self.ws["A%d" % r].value not in (None, ""):
@@ -435,7 +484,6 @@ class SheetWriter(object):
             raise
 
 
-# ------------------------------------------------ re-lay (old workbooks)
 # retired/GEN-1 layout, letter -> ledger key
 _OLD_LAYOUT = (
     ("A", "bubble"), ("B", "type"), ("C", "feature"), ("D", "nominal"),
@@ -448,10 +496,8 @@ _KEY_NEEDS_COLUMN = {"tier": "sheet_tier_column", "gage": "sheet_gage_column",
                      "refzone": "sheet_refzone_column",
                      "designator": "sheet_tier_designator",
                      "ncr": "sheet_ncr_column", "type": "sheet_type_column"}
-# ledger key each column lands in
 _KEY_OF_COL = {"comments": "comment"}
 
-# non-formula columns of DEFAULT layout, as letters
 CARRY_COLS = tuple(L for L in column_letters() if L not in FORMULA_COLS)
 
 
@@ -475,7 +521,6 @@ def _carried(ws):
 
 
 def _carry_cfg(rows):
-    """cfg turning on optional columns carried rows need."""
     cfg = {}
     for _r, d in rows:
         for key in d:
@@ -486,7 +531,6 @@ def _carry_cfg(rows):
 
 
 def needs_relay(path):
-    """Is workbook older than today's layout?"""
     try:
         wb = load_workbook(path)
     except Exception:
@@ -515,7 +559,6 @@ def relay(path, sheet_lang="both", company="", units="iso_mm", backup=True):
     for cell, v in title.items():
         ws[cell] = v
     cols = active_columns(cfg)
-    # ledger key each active column carries
     key_of = {col.key: _KEY_OF_COL.get(col.key, col.key) for _l, col in cols}
     for r, d in rows:
         # old nominal/tol grid -> one requirement string
@@ -541,7 +584,6 @@ def relay(path, sheet_lang="both", company="", units="iso_mm", backup=True):
 
 
 def _relay_put(ws, letter, r, v, col):
-    """Place one carried value, numeric where column numeric."""
     cell = ws["%s%d" % (letter, r)]
     if col.numfmt == "num":
         try:
@@ -553,7 +595,6 @@ def _relay_put(ws, letter, r, v, col):
 
 
 def _list_values(formula1):
-    """Entries of inline list validation, as written."""
     t = str(formula1 or "").strip()
     if t.startswith('"') and t.endswith('"'):
         t = t[1:-1]
@@ -561,12 +602,10 @@ def _list_values(formula1):
 
 
 def _covers_cell(sqref, cell):
-    """Does validation range name exactly ONE cell?"""
     return str(cell) in str(sqref or "").split()
 
 
 def _covers(sqref, letter):
-    """Does validation/formatting range touch data column?"""
     try:
         cells = str(sqref).split()
     except Exception:

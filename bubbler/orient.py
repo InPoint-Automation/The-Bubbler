@@ -1,27 +1,24 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Refit a diagonal callout box to its text angle
+# Refit diagonal callout box to text angle
 import math
 
-SQUARE_TOL_DEG = 1.0        # right-angle text: box already exact
-PAD = 1.0                   # pt, keep a refit off its glyphs
+SQUARE_TOL_DEG = 1.0        # right angle already exact
+PAD = 1.0                   # pt off glyphs
 
 
 def line_angle(direction):
-    """Text baseline vector to degrees"""
     dx, dy = (direction or (1.0, 0.0))[:2]
     return math.degrees(math.atan2(dy, dx)) % 360.0
 
 
 def is_square(deg, tol=SQUARE_TOL_DEG):
-    """Text along a page axis: bbox is the box"""
     return any(abs((deg % 360.0) - k) <= tol for k in (0.0, 90.0, 180.0,
                                                        270.0, 360.0))
 
 
 def page_lines(page):
-    """[(bbox, degrees, text)] per content text line"""
     try:
         d = page.get_text("dict")
     except Exception:
@@ -43,7 +40,6 @@ def _rot(pt, deg):
 
 
 def true_size(bbox, deg):
-    """A diagonal line's own w, h from its axis-aligned bbox"""
     bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
     c = abs(math.cos(math.radians(deg)))
     s = abs(math.sin(math.radians(deg)))
@@ -58,7 +54,6 @@ def true_size(bbox, deg):
 
 
 def line_corners(bbox, deg):
-    """Four corners of a line's true oriented box"""
     wh = true_size(bbox, deg)
     if wh is None:
         return None
@@ -72,12 +67,11 @@ def line_corners(bbox, deg):
 
 
 def fit_quad(lines, deg, pad=PAD):
-    """Tightest quad round these lines, along deg"""
     pts = []
     for bb, d in lines:
         cor = line_corners(bb, d)
         if cor is None:
-            return None                    # 45 deg: keep the bbox
+            return None                    # 45 deg keeps bbox
         pts += cor
     if not pts:
         return None
@@ -96,7 +90,6 @@ def _centre_in(rect, box):
 
 
 def region_angle(rect, lines):
-    """The one diagonal angle every line in the box shares, else None"""
     mine = [(bb, deg) for bb, deg, _t in lines if _centre_in(bb, rect)]
     if not mine:
         return None
@@ -105,7 +98,7 @@ def region_angle(rect, lines):
         return None
     lo, hi = min(degs), max(degs)
     if (hi - lo) > 2.0 * SQUARE_TOL_DEG:
-        return None                        # mixed angles: not one callout
+        return None                        # not one callout
     return sum(degs) / len(degs)
 
 
@@ -119,7 +112,6 @@ def _quad_area(q):
 
 
 def refit(rect, lines, pad=PAD):
-    """Diagonal callout to a tight quad, else None (square, or no shrink)"""
     deg = region_angle(rect, lines)
     if deg is None:
         return None

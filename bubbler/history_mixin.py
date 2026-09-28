@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Undo redo for MainWindow.
+# Undo and redo for MainWindow.
 
 from .i18n import tr
 
@@ -36,14 +36,24 @@ class HistoryMixin:
         self.render()
 
     def undo(self):
-        if not self._undo:
+        # sealed session blocks undo too
+        if not self._undo or self._undo_blocked():
             return
         self._redo.append(self.store.snapshot_state())
         self._restore(self._undo.pop())
         self.set_status(tr('undo'))
 
+    def _undo_blocked(self):
+        if getattr(self.store, "read_only", False):
+            self._undo, self._redo = [], []
+            eb = getattr(self, "_edit_blocked", None)
+            if callable(eb):
+                eb()
+            return True
+        return False
+
     def redo(self):
-        if not self._redo:
+        if not self._redo or self._undo_blocked():
             return
         self._undo.append(self.store.snapshot_state())
         self._restore(self._redo.pop())

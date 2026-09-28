@@ -14,13 +14,10 @@ from .units import INCH, MM, UNKNOWN, detect_units_doc
 
 
 class UnitsMixin:
-    """Owns drawing unit system with config fallback."""
-
     # session only not persisted
     _units_prompted = False
 
     def _units_detect(self):
-        """Detector verdict cached on session OCR fallback W43."""
         got = self.drawing.get("units_detect")
         if got is None:
             try:
@@ -37,19 +34,17 @@ class UnitsMixin:
         return got
 
     def _ocr_page_text(self, i):
-        """OCR text of one page empty on failure."""
-        from . import vision
-        words = vision._ocr_words(self.doc[i], self.cfg)
+        from .reader.vision import ocr_read
+        words = ocr_read._ocr_words(self.doc[i], self.cfg)
         return " ".join(str(w[4]) for w in words if len(w) > 4)
 
     def _detect_units_ocr(self):
-        """Units from scanned-drawing OCR or None."""
-        from . import vision
+        from .reader.vision import runtime
         from .units import detect_units
         if not self.cfg.get("vision_ocr", True):
             return None
         try:
-            if not vision.available(self.cfg).get("ocr"):
+            if not runtime.available(self.cfg).get("ocr"):
                 return None
         except Exception:
             return None
@@ -69,7 +64,6 @@ class UnitsMixin:
         return detect_units("\n".join(parts)) if parts else None
 
     def _units_autodetect(self):
-        """Detect once on open ask if undecided."""
         if self.drawing.get("units_asked") or self._units_prompted:
             self._sync_sheet_units()
             return
@@ -85,7 +79,7 @@ class UnitsMixin:
         if not self.cfg.get("units_ask", True) or self.store.read_only:
             self._sync_sheet_units()
             return                        # viewing only never block
-        self._units_prompted = True       # session only not file
+        self._units_prompted = True
         self._units_ask()
 
     def _units_box(self):
@@ -135,14 +129,12 @@ class UnitsMixin:
         self._sync_sheet_units()
         self._sync_units_controls()
         self._qbar_refresh()
-        # redraw stale mm/inch reading
         if getattr(self, "measure_mode", False):
             self._fill_munits()
             self._walk_show()
         self.set_status()
 
     def _sync_sheet_units(self):
-        """Tell workbook which system drawing is in."""
         w = getattr(self, "writer", None)
         if w is None:
             return
@@ -152,7 +144,6 @@ class UnitsMixin:
             pass
 
     def _units_menu(self):
-        """Hotbar menu for current units and change."""
         m = QMenu(self)
         cur = units_of(self.cfg, self.drawing)
         got = self._units_detect()
@@ -177,7 +168,6 @@ class UnitsMixin:
         m.exec(self.cursor().pos())
 
     def drawing_ladder_editor(self):
-        """Decimal-place ladder for drawing only."""
         units = units_of(self.cfg, self.drawing)
         key = ladder_key(units)
         buckets = sorted(CFG_DEFAULT[key], key=int)

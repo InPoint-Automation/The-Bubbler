@@ -9,10 +9,15 @@ import shutil
 import subprocess
 import sys
 
-# build123d wraps OpenCASCADE
+from . import syspython
+
 STEP_PIN = "build123d>=0.10"
 
 _PRISTINE_ENV = dict(os.environ)
+
+
+def _linux():
+    return sys.platform.startswith("linux")
 
 
 def step_root():
@@ -44,19 +49,19 @@ def _child_env():
     return env
 
 
+def _find_python():
+    return syspython.find(syspython.candidates(), _child_env())
+
+
 def system_python():
-    env = _child_env()
-    for name in ("python3.12", "python3.11", "python3.10", "python3",
-                 "python"):
-        p = shutil.which(name, path=env.get("PATH"))
-        if p and os.path.realpath(p) != os.path.realpath(sys.executable):
-            return p
-    return None
+    return _find_python()[0]
 
 
 def worker_script():
     here = os.path.dirname(os.path.abspath(__file__))
-    cands = [os.path.join(here, "step_worker.py")]
+    # onefile unpacks one level up
+    cands = [os.path.join(here, "step_worker.py"),
+             os.path.join(os.path.dirname(here), "step_worker.py")]
     try:
         cands.append(os.path.join(__compiled__.containing_dir,   # noqa: F821
                                   "step_worker.py"))
@@ -74,10 +79,9 @@ def is_installed():
 
 
 def install(on_line=None):
-    """Build isolated venv and pip-install OCC + numpy."""
-    py = system_python()
+    py, tried = _find_python()
     if not py:
-        return False, "no system python3 (install python3 + python3-venv)"
+        return False, syspython.not_found(tried, _linux())
     try:
         os.makedirs(step_root(), exist_ok=True)
     except OSError as e:
@@ -95,10 +99,11 @@ def install(on_line=None):
 
     if not os.path.exists(venv_python()):
         if run([py, "-m", "venv", venv_dir()]) != 0:
-            return False, "venv failed (need the python3-venv package)"
+            return False, ("venv failed (need the python3-venv package)"
+                           if _linux() else "venv failed (%s)" % py)
     vpy = venv_python()
     run([vpy, "-m", "pip", "install", "--upgrade", "pip"])
-    if run([vpy, "-m", "pip", "install", "numpy", STEP_PIN]) != 0:  # OCC + numpy
+    if run([vpy, "-m", "pip", "install", "numpy", STEP_PIN]) != 0:
         return False, "3D pack (build123d / OpenCASCADE) install failed"
     return True, "installed"
 
@@ -117,7 +122,6 @@ def _cache_key(step_path, up, size):
 
 
 def _cached_pair(key):
-    """Both cached PNGs on disk else None."""
     from .stepshade import _VIEWS
     out = {}
     for name in _VIEWS:
@@ -129,7 +133,6 @@ def _cached_pair(key):
 
 
 def _shade_to_cache(verts, tris, up, size, key):
-    """Shade raw mesh to two cached PNGs."""
     from . import stepshade
     os.makedirs(cache_dir(), exist_ok=True)
     pair = stepshade.render_pair(verts, tris, up=up, size=size)
@@ -142,7 +145,6 @@ def _shade_to_cache(verts, tris, up, size, key):
 
 
 def _tessellate(step_path):
-    """Run pack worker giving (verts, tris) or None."""
     import numpy as np
     wk = worker_script()
     if not wk or not os.path.exists(venv_python()):
@@ -167,7 +169,6 @@ def _tessellate(step_path):
 
 
 def render(step_path, up="z", size=320):
-    """Two isometric thumbs of STEP part or None."""
     if not step_path or not os.path.exists(step_path):
         return None
     key = _cache_key(step_path, up, size)

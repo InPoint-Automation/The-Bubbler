@@ -30,8 +30,7 @@ _FUNCS = {
     "min": min, "max": max, "sin": math.sin, "cos": math.cos,
     "tan": math.tan, "radians": math.radians, "degrees": math.degrees,
     "hypot": math.hypot, "atan": math.atan, "atan2": math.atan2,
-    # QA/QC: degrees are what a drawing carries, and true position from
-    # its x/y deviations (2 x sqrt(x^2 + y^2))
+    # degree trig, true position
     "sind": lambda x: math.sin(math.radians(x)),
     "cosd": lambda x: math.cos(math.radians(x)),
     "tand": lambda x: math.tan(math.radians(x)),
@@ -62,18 +61,62 @@ def _eval_node(node):
     raise ValueError("unsupported expression")
 
 
+# comma separates args only in these
+_MULTI_ARG = frozenset(("max", "min", "round", "hypot", "atan2", "tp"))
+
+
+def _semi_groups(s):
+    found, stack = set(), []
+    for i, c in enumerate(s):
+        if c == "(":
+            stack.append(i)
+        elif c == ")":
+            if stack:
+                stack.pop()
+        elif c == ";" and stack:
+            found.add(stack[-1])
+    return found
+
+
+def _comma_decimals(s):
+    """Decimal commas to points, `;` separators to commas."""
+    semi = _semi_groups(s)
+    out, stack, i = [], [], 0
+    while i < len(s):
+        c = s[i]
+        if c == "(":
+            j = len(out)
+            while j and out[j - 1].isspace():
+                j -= 1
+            k = j
+            while k and (out[k - 1].isalnum() or out[k - 1] == "_"):
+                k -= 1
+            # (comma args, semi args)
+            stack.append(("".join(out[k:j]) in _MULTI_ARG, i in semi))
+        elif c == ")":
+            if stack:
+                stack.pop()
+        elif c == ";":
+            if stack and stack[-1][1]:
+                c = ","
+        elif c == ",":
+            separator = bool(stack) and stack[-1][0] and not stack[-1][1]
+            nxt = s[i + 1] if i + 1 < len(s) else ""
+            if not separator and nxt.isdigit():
+                c = "."
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _prep(expr):
-    """normalize operators and comma decimals"""
     s = expr.strip()
     s = s.replace("^", "**").replace("×", "*").replace("÷", "/")
     s = s.replace("−", "-")
-    if "(" not in s and not any(c.isalpha() for c in s):
-        s = s.replace(",", ".")
-    return s
+    return _comma_decimals(s)
 
 
 def safe_eval(expr):
-    """eval arithmetic to float or None"""
     if not expr or not expr.strip():
         return None
     try:
@@ -91,7 +134,6 @@ def safe_eval(expr):
 
 
 def format_num(v):
-    """trim float noise and trailing zeros"""
     if v is None:
         return ""
     v = round(float(v), 10)
@@ -105,7 +147,7 @@ _AMBIG_OPS = set("+-/")
 
 
 def _auto_eval(s):
-    """bare entry is arithmetic"""
+    """Bare `+-/` counts only beside a decimal."""
     if any(c in _FORCE_OPS for c in s):
         return True
     body = s[1:]
@@ -115,12 +157,25 @@ def _auto_eval(s):
 
 
 def split_readings(text):
-    """split on whitespace and semicolons"""
-    return [t for t in re.split(r"[\s;]+", (text or "").strip()) if t]
+    """Never split inside parens, `tp(0,3; 0,4)` is one reading."""
+    out, cur, depth = [], [], 0
+    for c in (text or "").strip():
+        if c == "(":
+            depth += 1
+        elif c == ")" and depth:
+            depth -= 1
+        if depth == 0 and (c.isspace() or c == ";"):
+            if cur:
+                out.append("".join(cur))
+                cur = []
+            continue
+        cur.append(c)
+    if cur:
+        out.append("".join(cur))
+    return out
 
 
 def eval_measure(text):
-    """eval measure entry"""
     s = (text or "").strip()
     if not s:
         return s, False

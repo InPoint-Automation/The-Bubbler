@@ -24,18 +24,11 @@ from .i18n import tr
 
 
 def _active_run_closed(d):
-    """Active run closed out."""
     runs = d.get("runs")
     if not isinstance(runs, list) or not runs:
         return False
-    want = str(d.get("active_run") or "")
-    cur = None
-    for r in runs:
-        if isinstance(r, dict) and str(r.get("id")) == want:
-            cur = r
-            break
-    if cur is None and isinstance(runs[0], dict):
-        cur = runs[0]             # store's fallback
+    # app opens newest run
+    cur = runs[-1]
     if not isinstance(cur, dict):
         return False
     if "closed" in cur:
@@ -44,7 +37,6 @@ def _active_run_closed(d):
 
 
 def _pdf_status(pdf):
-    """Recents chip status tuple."""
     n = saved = 0
     bad = closed = False
     sp = qc_path(pdf, "_bubbles.json")
@@ -64,13 +56,12 @@ def _pdf_status(pdf):
                         and r.get("sheet_row") is not None)
             closed = _active_run_closed(d)
         except Exception:
-            bad = True            # surface damage
+            bad = True
     return (n, saved, os.path.isfile(qc_path(pdf, "_Inspection.xlsx")),
             bad, closed)
 
 
 def _mtime_text(pdf):
-    """Modified stamp separates two revs."""
     try:
         t = datetime.datetime.fromtimestamp(os.path.getmtime(pdf))
     except OSError:
@@ -87,7 +78,6 @@ def _size_text(pdf):
 
 
 def _session_lock_msg(pdf, subdir):
-    """Lock text when sidecar refuses load."""
     from .store import BubbleStore, session_lock_text
     path = qc_path(pdf, "_bubbles.json", subdir=subdir)
     if not os.path.isfile(path):
@@ -97,7 +87,6 @@ def _session_lock_msg(pdf, subdir):
     return session_lock_text(st)
 
 
-# recent drawings picker keeps
 RECENT_MAX = 30
 _THUMB_W, _THUMB_H = 64, 88
 
@@ -124,7 +113,6 @@ def _pdf_thumb(pdf, w=_THUMB_W, h=_THUMB_H):
 
 
 def _step_thumb(pdf, cfg):
-    """STEP view thumbnail once preview chosen."""
     if not cfg:
         return None
     try:
@@ -154,7 +142,7 @@ def _recent_row_widget(pdf, cfg=None):
     thumb.setAlignment(Qt.AlignCenter)
     thumb.setStyleSheet("border:1px solid %s; background:white;"
                         % OFFICE["muted"])
-    pm = _step_thumb(pdf, cfg) or _pdf_thumb(pdf)   # 3D preview wins
+    pm = _step_thumb(pdf, cfg) or _pdf_thumb(pdf)
     if pm is not None:
         thumb.setPixmap(pm)
     row.addWidget(thumb, 0, Qt.AlignVCenter)
@@ -195,7 +183,7 @@ def _recent_row_widget(pdf, cfg=None):
         % (chip_bg, chip_fg, chip_bd))
     row.addWidget(chip, 0, Qt.AlignVCenter)
 
-    if closed:                    # flag before open
+    if closed:
         seal = QLabel(tr('closed out'))
         seal.setStyleSheet(
             "background:#e4efe4; color:%s; border:1px solid #a9c9a9;"
@@ -245,12 +233,11 @@ DLG_MIN = (620, 360)
 
 
 def _dlg_size(cfg):
-    """Saved picker size clamped sane."""
     try:
         w, h = (int(v) for v in (cfg.get("open_dlg_size") or [])[:2])
     except (TypeError, ValueError):
         w = h = 0
-    if w < DLG_MIN[0] or h < DLG_MIN[1]:      # first run or silly
+    if w < DLG_MIN[0] or h < DLG_MIN[1]:
         return tuple(CFG_DEFAULT["open_dlg_size"])
     return min(w, 2400), min(h, 1600)
 
@@ -290,7 +277,7 @@ def _pick_pdf(cfg):
         lst.addItem(it)
         lst.setItemWidget(it, rw)
     lst.setCurrentRow(0)
-    lst.setMinimumHeight(420)          # scroll many recents
+    lst.setMinimumHeight(420)
     lay.addWidget(lst)
     sel = {"path": ""}
 
@@ -334,15 +321,19 @@ def _pick_pdf(cfg):
 
 
 def _selftest():
-    """fail if any pass is down."""
-    from . import vision
-    av = vision.available({})
+    from .reader.vision import runtime
+    av = runtime.available({})
     need = ("geometry", "ocr", "symbols", "region")
     for k in ("geometry", "ocr", "symbols", "region", "vlm"):
         print("%-9s %s" % (k, "ok" if av.get(k) else "MISSING"))
     for msg in (av.get("reasons") or {}).values():
         print("  ! " + msg)
     missing = [k for k in need if not av.get(k)]
+    phones = runtime.telemetry_builds()
+    for p in phones:
+        print("  ! onnxruntime with Microsoft telemetry: " + p)
+    if phones:
+        missing.append("offline (pin onnxruntime <1.28)")
     if missing:
         print("selftest FAILED: " + ", ".join(missing))
         return 1
@@ -351,7 +342,6 @@ def _selftest():
 
 
 def _offer_relay(xlsx, cfg):
-    """Rebuild workbook from retired template if user agrees."""
     try:
         if not needs_relay(xlsx):
             return
@@ -376,21 +366,20 @@ def _offer_relay(xlsx, cfg):
 
 
 def _offer_gpu(cfg, win):
-    """Offer GPU pack on idle-GPU Linux box."""
     if cfg.get("gpu_hint_off"):
         return
     try:
         from . import gpu
-        from . import vision
+        from .reader.vision import runtime
         if not gpu.is_linux() or gpu.is_installed():
             return
         if not cfg.get("vision_gpu", True):
             return                          # off on purpose
-        if vision._providers(cfg)[0] != "CPUExecutionProvider":
-            return                          # already accelerated
+        if runtime._providers(cfg)[0] != "CPUExecutionProvider":
+            return
         ver = gpu.driver_version()
         if ver is None or ver < gpu.MIN_DRIVER:
-            return                          # no card or old
+            return
     except Exception:
         return
     box = QMessageBox(win)
@@ -416,23 +405,45 @@ def _offer_gpu(cfg, win):
         win.settings()
 
 
-def main():
-    if "--selftest" in sys.argv[1:]:
-        sys.exit(_selftest())
-    cfg = load_cfg()
-    app = QApplication(sys.argv)
-    apply_office_theme(app)
-    pdf = sys.argv[1] if len(sys.argv) > 1 else _pick_pdf(cfg)
-    if not pdf:
-        sys.exit("No PDF.")
+# one window per drawing, else last writer wins
+_WINDOWS = {}
+
+
+def _win_key(pdf, cfg=None):
+    """Sidecar path keys drawing. Spellings share it."""
+    sub = (cfg or {}).get("qc_subdir", "qc")
+    return os.path.normcase(os.path.realpath(
+        qc_path(pdf, "_bubbles.json", subdir=sub)))
+
+
+def open_drawing(pdf, cfg, xlsx=None, parent=None):
+    key = _win_key(pdf, cfg)
+    old = _WINDOWS.get(key)
+    try:
+        alive = old is not None and old.isVisible()
+    except RuntimeError:                 # C++ side gone
+        alive = False
+    if alive:
+        if old.isMinimized():
+            old.showNormal()              # keeps maximized
+        old.raise_()
+        old.activateWindow()
+        return old
+    _WINDOWS.pop(key, None)
+    try:
+        import fitz
+        fitz.open(pdf).close()
+    except Exception as e:
+        QMessageBox.critical(parent, tr('Open drawing'),
+                             tr('Could not open %s:\n%s')
+                             % (os.path.basename(pdf), e))
+        return None
     sub = cfg.get("qc_subdir", "qc")
-    default_xlsx = qc_path(pdf, "_Inspection.xlsx", subdir=sub)
-    xlsx = sys.argv[2] if len(sys.argv) > 2 else default_xlsx
-    # skip refused session workbook
+    xlsx = xlsx or qc_path(pdf, "_Inspection.xlsx", subdir=sub)
     lock = _session_lock_msg(pdf, sub)
     if lock and not os.path.isfile(xlsx):
-        QMessageBox.critical(None, tr('Session'), lock)
-        sys.exit("session refused; no inspection sheet created.")
+        QMessageBox.critical(parent, tr('Session'), lock)
+        return None
     d = os.path.dirname(xlsx)
     if d and not os.path.isdir(d):
         try:
@@ -444,12 +455,12 @@ def main():
                               sheet_lang=cfg.get("sheet_lang", "both"),
                               units=units_of(cfg))
     except RuntimeError as e:
-        QMessageBox.critical(None, tr('Template'), str(e))
+        QMessageBox.critical(parent, tr('Template'), str(e))
         xlsx, _ = QFileDialog.getOpenFileName(
-            None, tr('Inspection sheet'),
+            parent, tr('Inspection sheet'),
             os.path.dirname(pdf), "Excel (*.xlsx)")
         if not xlsx:
-            sys.exit("No xlsx.")
+            return None
         created = False
     if not created:
         _offer_relay(xlsx, cfg)
@@ -458,16 +469,47 @@ def main():
     cfg["recent"] = rec[:RECENT_MAX]
     save_cfg(cfg)
     win = MainWindow(pdf, xlsx, cfg=cfg)
+    # registry holds window
+    win.setAttribute(Qt.WA_DeleteOnClose, True)
+    _WINDOWS[key] = win
+    def _forget(_o=None, k=key, w=win):
+        # this window only. Newer one survives
+        if _WINDOWS.get(k) is w:
+            _WINDOWS.pop(k, None)
+    win.destroyed.connect(_forget)
     win.show()
     if created:
         win.set_status(tr('created: %s') % os.path.basename(xlsx))
+    return win
+
+
+def open_new_window(cfg, parent=None):
+    pdf = _pick_pdf(cfg)
+    if pdf:
+        return open_drawing(pdf, cfg, parent=parent)
+    return None
+
+
+def main():
+    if "--selftest" in sys.argv[1:]:
+        sys.exit(_selftest())
+    cfg = load_cfg()
+    app = QApplication(sys.argv)
+    apply_office_theme(app)
+    pdf = sys.argv[1] if len(sys.argv) > 1 else _pick_pdf(cfg)
+    if not pdf:
+        sys.exit("No PDF.")
+    # CLI workbook first window only
+    win = open_drawing(pdf, cfg,
+                       xlsx=sys.argv[2] if len(sys.argv) > 2 else None)
+    if win is None:
+        sys.exit("No drawing opened.")
     _offer_gpu(cfg, win)
     _offer_step(cfg, pdf, win)
     sys.exit(app.exec())
 
 
 def _offer_step(cfg, pdf, parent=None):
-    """First open offers STEP 3D preview."""
     from .steppreview import should_ask, set_choice, decline
     if not should_ask(cfg, pdf):
         return
@@ -493,5 +535,5 @@ def _offer_step(cfg, pdf, parent=None):
     if ch:
         set_choice(cfg, pdf, sp, ch[0], ch[1])
     else:
-        set_choice(cfg, pdf, sp)             # default orientation
+        set_choice(cfg, pdf, sp)
     save_cfg(cfg)

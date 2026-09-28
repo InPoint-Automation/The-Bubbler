@@ -19,7 +19,6 @@ class _Sig(QObject):
 
 
 class _ProbeTask(QRunnable):
-    """Off-thread probe"""
 
     def __init__(self, cfg, sig):
         super().__init__()
@@ -36,7 +35,6 @@ class _ProbeTask(QRunnable):
 
 
 class StatusPanel(QWidget):
-    """One row per capability"""
 
     def __init__(self, cfg, parent=None, auto=True):
         super().__init__(parent)
@@ -76,7 +74,6 @@ class StatusPanel(QWidget):
         else:
             self._show_busy()
 
-    # ------------------------------------------------------------ drawing
 
     def rows(self):
         return list(getattr(self, "_rows", []))
@@ -91,7 +88,6 @@ class StatusPanel(QWidget):
         return out
 
     def start(self):
-        """Kick fresh probe off-thread"""
         self._btn.setEnabled(False)
         self._show_busy()
         QThreadPool.globalInstance().start(_ProbeTask(self.cfg, self._sig))

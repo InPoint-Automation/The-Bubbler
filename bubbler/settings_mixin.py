@@ -5,31 +5,32 @@
 
 import os
 
-from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import Qt, QObject, QRunnable, QThreadPool, Signal, QTimer
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QComboBox,
                                QCheckBox, QPushButton, QMessageBox,
                                QTabWidget, QScrollArea, QFileDialog,
-                               QGroupBox, QProgressDialog, QSpinBox,
+                               QGroupBox, QProgressDialog, QSpinBox, QDoubleSpinBox,
                                QTableWidget, QTableWidgetItem,
                                QAbstractItemView)
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap
 
 from .common import TYPES, TIERS, SHAPES
-from .config import (save_cfg, CFG_DEFAULT, FAI_SHOW, dp_label,
-                     ladder_key, validate_ladder)
+from .config import (save_cfg, leaders_on, CFG_DEFAULT, FAI_SHOW, dp_label,
+                     ladder_key, validate_ladder, reset_cfg)
 from .sheet import HEADER_FIELDS
-from .scanlib import GAGES, scan_presets
+from .gaging import GAGES
+from .scanrows import scan_presets
 from .scanscope import ScopeDialog
-from .i18n import tr, set_lang, retranslate, sheet_label
-from .widgets import fill_keyed, combo_key
+from .i18n import tr, set_lang, get_lang, retranslate, sheet_label
+from .widgets import fill_keyed, combo_key, set_combo_key
 from .keyhelp import _keybinds_html
 from .statuspanel import StatusPanel
-from . import vision, florence, gpu, step
+from . import florence, gpu, step
+from .reader.vision import runtime
 
 
 def _ladder_reason(why):
-    """Ladder reason tuple to message"""
     code = why[0]
     if code == "bucket":
         return tr('%s is not a decimal-place bucket.') % why[1]
@@ -52,7 +53,6 @@ class _DLSignals(QObject):
 
 
 class _FlorenceDLTask(QRunnable):
-    """Florence-2 download"""
 
     def __init__(self, pack, dest_root):
         super().__init__()
@@ -75,20 +75,17 @@ class _FlorenceDLTask(QRunnable):
             self.signals.failed.emit(str(e))
 
 
-# widths fit content
 _NUM_W = 84
 _CB_W = 190
 
 
 def _num(val):
-    """Short numeric entry field"""
     e = QLineEdit("%g" % float(val))
     e.setMaximumWidth(_NUM_W)
     return e
 
 
 def _combo(items=None, width=_CB_W):
-    """Drop-down capped to content"""
     cb = QComboBox()
     if items:
         cb.addItems(items)
@@ -97,7 +94,6 @@ def _combo(items=None, width=_CB_W):
     return cb
 
 
-# label per FAI_SHOW toggle
 SHOW_LABELS = {
     "part_name": "Part name", "drawing": "Drawing number",
     "dwg_rev": "Drawing rev", "part_rev": "Part rev",
@@ -110,7 +106,6 @@ SHOW_LABELS = {
 
 
 def _tab(tabs, title):
-    """Scrollable tab page to column layout"""
     page = QWidget()
     col = QVBoxLayout(page)
     col.setContentsMargins(10, 10, 10, 10)
@@ -124,7 +119,6 @@ def _tab(tabs, title):
 
 
 def _sect(col, title):
-    """Titled section to grid"""
     box = QGroupBox(tr(title))
     grid = QGridLayout(box)
     grid.setContentsMargins(10, 6, 10, 8)
@@ -135,15 +129,21 @@ def _sect(col, title):
     return grid
 
 
+_FACET_LABEL = {"hole": "Hole", "depth": "Hole depth", "cbore": "C'bore",
+                "cbore_depth": "C'bore depth", "csink": "C'sink",
+                "csink_depth": "C'sink depth",
+                "tap_drill": "Tap drill (under a thread)",
+                "tap_drill_depth": "Tap drill depth",
+                "qty": "Quantity (2X): count it, a reading each"}
+
+
 def _tag(w, key):
-    """Mark which config key control owns"""
     if key:
         w.setProperty("cfg_key", key)
     return w
 
 
 def _field(grid, label, w, key=None, tip=None):
-    """Label plus one right-sized control"""
     r = grid.rowCount()
     lab = QLabel(label)
     lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -156,7 +156,6 @@ def _field(grid, label, w, key=None, tip=None):
 
 
 def _full(grid, w, key=None, tip=None):
-    """Row spanning whole section"""
     grid.addWidget(w, grid.rowCount(), 0, 1, 3)
     if tip:
         w.setToolTip(tip)
@@ -164,7 +163,6 @@ def _full(grid, w, key=None, tip=None):
 
 
 def _hint(grid, text, color="#777777"):
-    """Grey explanatory line"""
     lab = QLabel(text)
     lab.setProperty("i18n_skip", True)
     lab.setWordWrap(True)
@@ -174,7 +172,6 @@ def _hint(grid, text, color="#777777"):
 
 
 def _mark_missing(cb, name):
-    """A gated control whose backend is absent: empty, off, flagged red"""
     cb.setChecked(False)
     cb.setEnabled(False)
     cb.setStyleSheet("color:#c0392b;")
@@ -183,7 +180,6 @@ def _mark_missing(cb, name):
 
 
 def _pairs(items, cols):
-    """Label + control pairs packed into `cols` columns"""
     host = QWidget()
     gl = QGridLayout(host)
     gl.setContentsMargins(0, 0, 0, 0)
@@ -218,6 +214,20 @@ class SettingsMixin:
         dlg.resize(620, 660)
         dlg.exec()
 
+    # cell -> report toggle; None always shown
+    _HDR_ON_REPORT = {"B3": None, "E3": "part_name", "B4": "drawing",
+                      "E4": "dwg_rev", "H4": "part_rev", "B5": "po",
+                      "E5": "material", "H5": "serial", "B6": None,
+                      "E6": None, "H6": None, "B7": "customer"}
+
+    def _header_cells(self):
+        """Header asks only what report prints."""
+        show = self.cfg.get("fai_show") or {}
+        return [(c, k) for c, k in HEADER_FIELDS
+                if c in self._HDR_ON_REPORT
+                and (self._HDR_ON_REPORT[c] is None
+                     or show.get(self._HDR_ON_REPORT[c], True))]
+
     def header_editor(self, prefill=None):
         if self._hdr_win is not None:
             try:
@@ -227,14 +237,14 @@ class SettingsMixin:
             except RuntimeError:
                 self._hdr_win = None
         win = QDialog(self)
-        win.setWindowTitle(tr('Header'))
+        win.setWindowTitle(tr('Header and run'))
         self._hdr_win = win
         g = QGridLayout(win)
         current = self.writer.get_header()
         prefill = prefill or {}
         entries = {}
-        for i, (cell, key) in enumerate(HEADER_FIELDS):
-            # label in UI language
+        cells = self._header_cells()
+        for i, (cell, key) in enumerate(cells):
             g.addWidget(QLabel(tr(key)), i, 0)
             seed = prefill[cell] if cell in prefill else current.get(cell, "")
             e = QLineEdit(str(seed))
@@ -243,18 +253,55 @@ class SettingsMixin:
                                QLineEdit.focusInEvent(ent, ev)))
             g.addWidget(e, i, 1)
             entries[cell] = e
+        self._mint_report_id()                # never blank
+        run = self.store.run() or {}
+        rid_row = len(cells)
+        g.addWidget(QLabel(tr('Report ID')), rid_row, 0)
+        rid_edit = QLineEdit(str(run.get("report_id") or ""))
+        rid_seed = rid_edit.text()
+        if run.get("closed") or self.store.read_only:
+            rid_edit.setReadOnly(True)
+            rid_edit.setToolTip(tr('Fixed at close-out.'))
+        else:
+            rid_edit.setToolTip(tr(
+                'Filled in for you and follows the part number and revision '
+                'until you type your own. Fixed at close-out.'))
+        g.addWidget(rid_edit, rid_row, 1)
+        self._hdr_rid = rid_edit
+
+        unseen = {}                           # scanned into hidden cells
 
         def apply():
-            vals = {c: e.text() for c, e in entries.items()}
+            nonlocal rid_seed
+            vals = dict(unseen)
+            vals.update({c: e.text() for c, e in entries.items()})
+            typed = rid_edit.text().strip()
+            if typed != rid_seed and not rid_edit.isReadOnly():
+                try:
+                    self.store.set_report_id(typed)
+                except ValueError as ex:
+                    msg = (tr('Report ID %s cannot be used as a file name: '
+                              'leave out the characters /\\:*?"<>| and a '
+                              'leading dot.') if "file name" in str(ex)
+                           else tr('Report ID %s is already used by another '
+                                   'run.'))
+                    QMessageBox.warning(win, tr('Header and run'), msg % typed)
+                    return
+                except Exception:
+                    pass
             self.writer.set_header(vals)
             self.store.header.update(vals)    # session owns title block
             self._stamp_run_identity()        # run-scoped to active run
+            self._mint_report_id()            # follows part/rev, blank refills
+            rid_seed = str((self.store.run() or {}).get("report_id") or "")
+            rid_edit.setText(rid_seed)
+            self.writer.set_report_id(rid_seed or None)
             try:
                 self.writer.save()
             except Exception as ex:
                 QMessageBox.critical(win, tr('Sheet error'), str(ex))
                 return
-            self._save_session()              # persist header + identity
+            self._save_session()
             self.set_status(tr('header saved'))
 
         def rescan():
@@ -268,10 +315,12 @@ class SettingsMixin:
                 e = entries.get(cell)
                 if e is not None:
                     e.setText(str(val))
+                elif not str(self.store.header.get(cell) or "").strip():
+                    unseen[cell] = str(val)
             if parsed:
                 self.set_status(tr('title block scanned'))
 
-        nrow = len(HEADER_FIELDS)
+        nrow = len(cells) + 1
         bw = QWidget()
         bl = QHBoxLayout(bw)
         b_apply = QPushButton(tr('Apply'))
@@ -305,18 +354,13 @@ class SettingsMixin:
         outer.addWidget(tabs)
         vars_ = {}
 
-        # ------------------------------------------------------------ General
         col = _tab(tabs, 'General')
-        gp = _sect(col, 'Language and mode')
+        gp = _sect(col, 'Language')
         cb_lang = _field(gp, tr('Language'), _combo(), "language")
         cb_lang.addItem("English", "en")
         cb_lang.addItem("Polski", "pl")
         cb_lang.setCurrentIndex(
             1 if self.cfg.get("language", "en") == "pl" else 0)
-        cb_mode = _field(gp, tr('Mode'), _combo(), "mode")
-        cb_mode.addItem(tr('Advanced'), "advanced")
-        cb_mode.addItem(tr('Simple'), "simple")
-        cb_mode.setCurrentIndex(1 if self.cfg.get("mode") == "simple" else 0)
 
         ap = _sect(col, 'Appearance')
         e_icon = QLineEdit(str(self.cfg.get("icon_color",
@@ -358,7 +402,6 @@ class SettingsMixin:
                      '~/.bubbler/step; not part of the app download.'))
         col.addStretch(1)
 
-        # ------------------------------------------------------------ Bubbles
         col = _tab(tabs, 'Bubbles')
         dp_ = _sect(col, 'New bubble defaults')
         cvars = {}
@@ -380,14 +423,13 @@ class SettingsMixin:
         c_lead = _full(pl_, QCheckBox(
             tr('Leader line from balloon to callout')), "leaders",
             tr("On: the balloon sits beside the callout, with a line "
-               "pointing back. Off: it sits on the callout. Same as the "
-               "ribbon Leaders box and the L key."))
+               "pointing back. Off: it sits on the callout. Default for a "
+               "drawing; the ribbon Leaders box sets the open one."))
         c_lead.setChecked(bool(self.cfg.get("leaders",
                                             CFG_DEFAULT["leaders"])))
         c_ltrim = _full(pl_, QCheckBox(
             tr('Stop the leader at the callout text')), "leader_trim")
         c_ltrim.setChecked(bool(self.cfg.get("leader_trim", True)))
-        # preferred balloon side lives in the q hotbar (Offset), not here
         c_snap = _full(pl_, QCheckBox(tr('Snap to drawing geometry')),
                        "snap_geom")
         c_snap.setChecked(bool(self.cfg.get("snap_geom", True)))
@@ -399,6 +441,72 @@ class SettingsMixin:
                           _num(self.cfg.get("capture_radius",
                                             CFG_DEFAULT["capture_radius"])),
                           "capture_radius")
+        c_toast = _full(pl_, QCheckBox(
+            tr('Confirm each auto-made bubble with a toast')), "auto_toast",
+            tr('On: a click that bubbles a callout with no dialog shows what '
+               'was bubbled for a moment, with a Correct button that opens '
+               'it for editing.'))
+        c_toast.setChecked(bool(self.cfg.get("auto_toast", True)))
+        c_boxob = _full(pl_, QCheckBox(
+            tr('Bubbles avoid other callouts\' boxes')),
+            "placement_box_obstacles",
+            tr('On: a balloon also keeps off the boxes of callouts already '
+               'bubbled (and of the others in one scan), not only off their '
+               'text.'))
+        c_boxob.setChecked(bool(self.cfg.get("placement_box_obstacles",
+                                             True)))
+        from .toast import toast_timing
+        _tms, _tcap = toast_timing(self.cfg)
+        sp_tsec = QDoubleSpinBox()
+        sp_tsec.setRange(0.5, 15.0)
+        sp_tsec.setSingleStep(0.5)
+        sp_tsec.setDecimals(1)
+        sp_tsec.setSuffix(" s")
+        sp_tsec.setValue(_tms / 1000.0)
+        _field(pl_, tr('Toast shown for'), sp_tsec, "toast_secs",
+               tr('How long each auto-bubble toast stays up. Hovering a '
+                  'toast holds them all.'))
+        sp_tcap = QSpinBox()
+        sp_tcap.setRange(1, 20)
+        sp_tcap.setValue(_tcap)
+        _field(pl_, tr('Toasts stacked at most'), sp_tcap, "toast_stack",
+               tr('Clicking faster than the toasts expire stacks them; past '
+                  'this many the oldest goes.'))
+
+        ho = _sect(col, 'Hole callout order')
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem, \
+            QAbstractItemView
+        from .scanrows import facet_order
+        lst_facets = QListWidget()
+        lst_facets.setDragDropMode(QAbstractItemView.InternalMove)
+        lst_facets.setMaximumHeight(140)
+        lst_facets.setMaximumWidth(220)
+        from .scanrows import facet_skipped
+        for f in facet_order(self.cfg):
+            it = QListWidgetItem(tr(_FACET_LABEL[f]))
+            it.setData(Qt.UserRole, f)
+            # ticked = bubbled
+            if f != "hole":
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setCheckState(Qt.Unchecked if facet_skipped(f, self.cfg)
+                                 else Qt.Checked)
+            lst_facets.addItem(it)
+        lst_facets.setMaximumHeight(180)
+        _full(ho, lst_facets, "hole_facet_order",
+              tr('Drag to set the order a hole callout\'s sub-rows are '
+                 'numbered in -- the same order in scan review, a clicked '
+                 'callout and the bubble dialog. Untick a part to leave it '
+                 'unbubbled by default (it still shows in scan review).'))
+        _tag(lst_facets, "hole_facet_order,hole_facet_skip")
+        cb_qcomb = _field(ho, tr('Several readings report'), _combo(),
+                          "qty_combine",
+                          tr('With the quantity bubbled, each instance is '
+                             'measured. The report takes the worst reading '
+                             'or their average.'))
+        cb_qcomb.addItem(tr('the worst'), "worst")
+        cb_qcomb.addItem(tr('the average'), "average")
+        cb_qcomb.setCurrentIndex(
+            1 if self.cfg.get("qty_combine") == "average" else 0)
 
         tr_ = _sect(col, 'Criticality tiers')
         c_shapes = _full(tr_, QCheckBox(
@@ -456,7 +564,6 @@ class SettingsMixin:
         _sync_typetier()
         col.addStretch(1)
 
-        # --------------------------------------------------------- Tolerances
         col = _tab(tabs, 'Tolerances')
         un = _sect(col, 'Drawing units')
         cb_units = _field(un, tr('Units'), _combo(), "units")
@@ -468,10 +575,10 @@ class SettingsMixin:
                      'this is what a new or undecided drawing gets.'))
 
         gt = _sect(col, 'General tolerance')
-        # ladder follows the drawing standard: ISO 2768 on mm, decimal on inch
         _hint(gt, tr('The general tolerance follows the drawing standard: '
                      'ISO 2768 by class on a millimetre drawing, the '
-                     'decimal-place ladder on an inch one.'))
+                     'decimal-place ladder on an inch one. Default for a '
+                     'drawing; the ribbon switch sets the open one.'))
         c_dpon = _full(gt, QCheckBox(
             tr('Apply the general tolerance automatically')),
             "dp_on,rib_iso_on")
@@ -497,11 +604,10 @@ class SettingsMixin:
         c_angshort.setChecked(bool(self.cfg.get(
             "angular_short_side", CFG_DEFAULT["angular_short_side"])))
 
-        lad = _sect(col, 'Decimal-place ladder (inch)')
+        lad = _sect(col, 'General tolerance: inch ladder')
         dpv = {}
 
         def _ladder_row(units, buckets):
-            """One editable ladder as {bucket: QLineEdit}"""
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -521,7 +627,6 @@ class SettingsMixin:
             lay.addStretch(1)
             return row, out
 
-        # decimal ladders are inch-only; a millimetre drawing uses ISO 2768
         for _units, _lab, _buckets in (
                 ("asme_inch", tr('Inch ladder'), ("1", "2", "3", "4")),):
             _row, dpv[_units] = _ladder_row(_units, _buckets)
@@ -538,11 +643,8 @@ class SettingsMixin:
         b_ladreset.clicked.connect(_reset_ladders)
         lad.addWidget(b_ladreset, lad.rowCount(), 1)
 
-        # both the ISO 2768 class default and the inch ladder are always
-        # editable; which one a drawing uses is decided by its units
         col.addStretch(1)
 
-        # -------------------------------------------------------------- Gages
         col = _tab(tabs, 'Gages')
         tvars = {}
 
@@ -568,7 +670,7 @@ class SettingsMixin:
         tbl.verticalHeader().setVisible(False)
         tbl.setProperty("i18n_skip", True)
         tbl.setFixedHeight(150)
-        _tag(tbl, "metrology_tools")        # reachable for the settings test
+        _tag(tbl, "metrology_tools")        # for settings test
         self._tool_table = tbl
         self._fill_tool_table(self.cfg.get("metrology_tools")
                               or CFG_DEFAULT["metrology_tools"], "mm")
@@ -602,28 +704,17 @@ class SettingsMixin:
                       'radius, angle, surface, gdt. mm/inch converts entered '
                       'values.'))
 
-        av = _sect(col, 'Available gages')
-        gcfg = dict(self.cfg.get("gages") or {})
-        gvars = {}
-        _gw = QWidget()
-        _gl = QGridLayout(_gw)
-        _gl.setContentsMargins(0, 0, 0, 0)
-        for i, gname in enumerate(GAGES):
-            c = QCheckBox(gname)
-            c.setProperty("i18n_skip", True)
-            c.setChecked(bool(gcfg.get(gname, True)))
-            _tag(c, "gages")
-            _gl.addWidget(c, i // 2, i % 2)
-            gvars[gname] = c
-        _gl.setColumnStretch(2, 1)
-        av.addWidget(_gw, av.rowCount(), 0, 1, 3)
         col.addStretch(1)
 
-        # --------------------------------------------------- Inspection sheet
         col = _tab(tabs, 'Inspection sheet')
 
-        # drawing overrides shop default
-        sc = _sect(col, 'Inspection type')
+
+        sh = _sect(col, 'Sheet header')
+        e_comp = QLineEdit(str(self.cfg.get("company",
+                                            CFG_DEFAULT["company"])))
+        e_comp.setMaximumWidth(280)
+        vars_["company"] = _field(sh, tr('Company'), e_comp, "company")
+        sc = _sect(col, 'Default inspection type')
         cb_scope = _field(sc, tr('Inspection'),
                           _combo(scan_presets(self.cfg), 200), "scan_preset")
         cb_scope.setProperty("i18n_skip", True)
@@ -631,11 +722,11 @@ class SettingsMixin:
                                     or CFG_DEFAULT["scan_preset"]))
         b_scope = QPushButton(tr('Edit presets...'))
         b_scope.setMaximumWidth(200)
-        # button carries tag
         _full(sc, b_scope, "scan_presets",
-              tr('The sheet says which inspection this is in its Inspection '
-                 'type cell, and that wins over this default. Nothing is '
-                 'ever hidden from scan review -- only the starting tick '
+              tr('Each run says which inspection it is in the sheet\'s '
+                 'Inspection type cell, and that wins over this default; a '
+                 'new run starts from the previous run\'s. Nothing is ever '
+                 'hidden from scan review -- only the starting tick '
                  'changes.'))
         self._scope_presets = dict(self.cfg.get("scan_presets") or {})
 
@@ -654,14 +745,7 @@ class SettingsMixin:
                 keep if keep in dlg.names() else CFG_DEFAULT["scan_preset"])
             cb_scope.blockSignals(False)
         b_scope.clicked.connect(_edit_scope)
-
-        sh = _sect(col, 'Sheet header')
-        e_comp = QLineEdit(str(self.cfg.get("company",
-                                            CFG_DEFAULT["company"])))
-        e_comp.setMaximumWidth(280)
-        vars_["company"] = _field(sh, tr('Company'), e_comp, "company")
         so = _sect(col, 'Sheet output')
-        # drives both sheet and report
         cb_sheet = _field(so, tr('Document language'), _combo(), "sheet_lang")
         cb_sheet.addItem("EN + PL", "both")
         cb_sheet.addItem("English", "en")
@@ -690,7 +774,6 @@ class SettingsMixin:
                            'after the value, because a square bracket is easy '
                            'to miss on a printed packet.'))
         c_brlab.setChecked(bool(self.cfg.get("sheet_basic_ref_label")))
-        # optional columns default off
         c_gage = _full(so, QCheckBox(tr('Add a gage column')),
                        "sheet_gage_column",
                        tr('Off by default. On: the sheet carries a column '
@@ -718,7 +801,6 @@ class SettingsMixin:
                           'type dropdown (dim, hole, thread, GD&T, finish).'))
         c_type.setChecked(bool(self.cfg.get("sheet_type_column")))
 
-        # live column-layout preview
         from . import sheet_build
         _col_flags = {
             "sheet_tier_designator": c_desig,
@@ -729,8 +811,6 @@ class SettingsMixin:
             "sheet_method_column": c_method,
             "sheet_type_column": c_type,
         }
-        # a real mini-sheet: same columns, widths, bilingual headers and fills
-        # as the built xlsx, with sample rows; it re-renders as toggles flip
         prev = QTableWidget()
         prev.setEditTriggers(QAbstractItemView.NoEditTriggers)
         prev.setSelectionMode(QAbstractItemView.NoSelection)
@@ -742,11 +822,10 @@ class SettingsMixin:
         prev.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignTop)
         prev.horizontalHeader().setStyleSheet(
             "QHeaderView::section{background:#1f3864;color:#ffffff;"
-            "border:1px solid #16294a;padding:2px;}")   # the sheet's navy band
+            "border:1px solid #16294a;padding:2px;}")
         self._sheet_preview = prev
         self._sheet_col_preview = prev      # live-update test reads this
 
-        # one sample row per common callout kind, keyed by column
         _SAMPLE = (
             {"bubble": "1", "type": "dim", "feature": "width",
              "requirement": u"12.00 ±0.10", "measured": "12.03",
@@ -778,7 +857,7 @@ class SettingsMixin:
                     it = QTableWidgetItem(str(row.get(colm.key, "")))
                     it.setToolTip(it.text())
                     try:
-                        it.setBackground(QColor("#" + colm.fill))  # column fill
+                        it.setBackground(QColor("#" + colm.fill))
                     except Exception:
                         pass
                     if colm.key == "result" and it.text():
@@ -792,15 +871,25 @@ class SettingsMixin:
         _full(so, QLabel(tr('Inspection sheet preview:')))
         so.addWidget(prev, so.rowCount(), 0, 1, 3)
 
-        # ------------------------------------------------------ FAI report
-        # same fields as header (L5)
         fa = _sect(col, 'Inspection report')
-        c_faion = _full(fa, QCheckBox(tr('Append the report on save')),
-                        "fai_report_on",
-                        tr('On by default. One Save produces the ballooned '
-                           'PDF with the report pages appended. Off emits the '
-                           'ballooned drawing alone.'))
-        c_faion.setChecked(bool(self.cfg.get("fai_report_on", True)))
+        cb_out = _field(fa, tr('Save writes'), _combo(), "save_output",
+                        tr('What one Save puts in the output PDF. The print '
+                           'preview can still print or save any other '
+                           'combination.'))
+        for key, label in (("both", tr('Drawing and report')),
+                           ("print", tr('Drawing only')),
+                           ("report", tr('Report only'))):
+            cb_out.addItem(label, key)
+        cb_out.setProperty("i18n_skip", True)
+        set_combo_key(cb_out, self.cfg.get("save_output",
+                                           CFG_DEFAULT["save_output"]))
+        c_repfirst = _full(fa, QCheckBox(tr('Report pages first')),
+                           "report_first",
+                           tr('Put the report before the ballooned drawing.'))
+        c_repfirst.setChecked(bool(self.cfg.get("report_first", False)))
+        cb_out.currentIndexChanged.connect(
+            lambda _i: c_repfirst.setEnabled(combo_key(cb_out) == "both"))
+        c_repfirst.setEnabled(combo_key(cb_out) == "both")
         e_logo = QLineEdit(str(self.cfg.get("fai_logo", "") or ""))
         e_logo.setPlaceholderText(tr('none (company name only)'))
         e_logo.setMaximumWidth(280)
@@ -835,26 +924,55 @@ class SettingsMixin:
         cb_paper.setProperty("i18n_skip", True)
         cb_paper.setCurrentIndex(max(0, cb_paper.findData(
             str(self.cfg.get("fai_paper", "a4")))))
-        # report language follows document language
         sp_amber = QSpinBox()
         sp_amber.setRange(0, 100)
         sp_amber.setSuffix(" %")
-        sp_amber.setSpecialValueText(tr('off'))      # 0 = no amber band
+        sp_amber.setSpecialValueText(tr('off'))      # 0 no amber
         sp_amber.setValue(int(self.cfg.get("fai_amber_pct", 90) or 0))
         _field(fa, tr('Tolerance-bar amber at'), sp_amber, "fai_amber_pct",
                tr('A reading past this % of the half-tolerance is drawn '
                   'amber (still in tolerance), red once out. Set to off for '
                   'green/red only.'))
-        e_cust = QLineEdit(str(self.cfg.get("fai_customer", "") or ""))
-        e_cust.setMaximumWidth(280)
-        _field(fa, tr('Customer'), e_cust, "fai_customer")
+        sp_imgw = QSpinBox()
+        sp_imgw.setRange(10, 100)
+        sp_imgw.setSuffix(" %")
+        sp_imgw.setValue(int(self.cfg.get("fai_img_width_pct", 100) or 100))
+        _field(fa, tr('Report image width'), sp_imgw, "fai_img_width_pct",
+               tr('Width of an attached image, as a share of the page width, '
+                  'when images are laid out automatically.'))
+        cb_imgpp = _field(fa, tr('Report images per page'), _combo(),
+                          "fai_img_per_page",
+                          tr('Automatic fills the space left on the last '
+                             'report page, then stacks images at the width '
+                             'above. 1, 2 or 4 lays each page out as a grid.'))
+        for key, label in (("auto", tr('Automatic')), ("1", "1"),
+                           ("2", "2"), ("4", "4")):
+            cb_imgpp.addItem(label, key)
+        cb_imgpp.setProperty("i18n_skip", True)
+        set_combo_key(cb_imgpp, str(self.cfg.get("fai_img_per_page",
+                                                 "auto")))
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        from .runstats import STATS
+        lst_stats = QListWidget()
+        lst_stats.setMaximumHeight(118)
+        on = set(self.cfg.get("run_stats") or ["mean"])
+        for key in STATS:
+            it = QListWidgetItem(tr({"n": "n", "mean": "Mean", "min": "Min",
+                                     "max": "Max", "range": "Range",
+                                     "stdev": "Std dev"}[key]))
+            it.setData(Qt.UserRole, key)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if key in on else Qt.Unchecked)
+            lst_stats.addItem(it)
+        _field(fa, tr('Statistics across runs'), lst_stats, "run_stats",
+               tr('What the Data > Statistics across runs table shows for '
+                  'each characteristic. Descriptive only.'))
         e_insp = QLineEdit(str(self.cfg.get("fai_inspector", "") or ""))
         e_insp.setMaximumWidth(280)
-        _field(fa, tr('Inspector'), e_insp, "fai_inspector")
-        _hint(fa, tr('Fills the header of a new sheet and the report, so it '
-                     'is not retyped per drawing.'))
+        _field(fa, tr('Default inspector'), e_insp, "fai_inspector")
+        _hint(fa, tr('Fills a blank inspector in the Header. A name typed '
+                     'there wins.'))
 
-        # always-on columns not offered
         sw = _sect(col, 'Show on the report')
         _show = dict(self.cfg.get("fai_show") or {})
         show_cbs = {}
@@ -869,12 +987,85 @@ class SettingsMixin:
             show_cbs[_k] = c
         _swl.setColumnStretch(3, 1)
         sw.addWidget(_sww, sw.rowCount(), 0, 1, 3)
+
+        pv = _sect(col, 'Report preview')
+        fai_prev = QLabel()
+        fai_prev.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        fai_prev.setMinimumHeight(360)
+        fai_prev.setProperty("i18n_skip", True)
+        pv.addWidget(fai_prev, pv.rowCount(), 0, 1, 3)
+        self._fai_preview = fai_prev          # tests read this
+
+        _logo_cache = {}
+
+        def _fai_render():
+            from .report_demo import preview_png
+            logo = None
+            try:
+                lp = e_logo.text().strip()
+                if lp and os.path.isfile(lp):
+                    # read once per file version, not per keystroke
+                    stamp = (lp, os.path.getmtime(lp))
+                    if stamp not in _logo_cache:
+                        _logo_cache.clear()
+                        with open(lp, "rb") as f:
+                            _logo_cache[stamp] = f.read()
+                    logo = _logo_cache[stamp]
+            except OSError:
+                logo = None
+            lang = {"both": "en/pl", "en": "en", "pl": "pl"}.get(
+                cb_sheet.currentData(), "en/pl")
+            try:
+                form = e_formid.text().strip()
+                rev = e_formrev.text().strip()
+                png = preview_png(
+                    show={k: c.isChecked() for k, c in show_cbs.items()},
+                    paper=cb_paper.currentData() or "a4",
+                    amber_pct=sp_amber.value(), logo=logo,
+                    lang=lang,
+                    company=e_comp.text(),
+                    inspection_type=cb_scope.currentText(),
+                    form_id=("%s REV %s" % (form, rev)).strip() if rev
+                    else form,
+                    customer=_hdr_customer, inspector=e_insp.text(),
+                    width_px=520)
+            except Exception:                    # noqa: BLE001 preview only
+                fai_prev.setText(tr('Preview unavailable'))
+                return
+            pm = QPixmap()
+            pm.loadFromData(png, "PNG")
+            fai_prev.setPixmap(pm)
+
+        try:
+            _hdr_customer = str(self.store.header.get("B7") or "")
+        except Exception:
+            _hdr_customer = ""
+        fai_timer = QTimer(dlg)
+        fai_timer.setSingleShot(True)
+        fai_timer.setInterval(150)
+        fai_timer.timeout.connect(_fai_render)
+        self._fai_preview_timer = fai_timer
+        for c in show_cbs.values():
+            c.toggled.connect(lambda _on: fai_timer.start())
+        cb_paper.currentIndexChanged.connect(lambda _i: fai_timer.start())
+        sp_amber.valueChanged.connect(lambda _v: fai_timer.start())
+        for e in (e_logo, e_formid, e_formrev, e_insp, e_comp):
+            e.textChanged.connect(lambda _t: fai_timer.start())
+        cb_sheet.currentIndexChanged.connect(lambda _i: fai_timer.start())
+        cb_scope.currentIndexChanged.connect(lambda _i: fai_timer.start())
+        dlg.finished.connect(lambda _r: fai_timer.stop())
+        _fai_render()
+        # toggles, preview, then text
+        box_fa, box_sw, box_pv = (g.parentWidget() for g in (fa, sw, pv))
+        at = col.indexOf(box_fa)
+        for i, b in enumerate((box_sw, box_pv)):
+            col.removeWidget(b)
+            col.insertWidget(at + i, b)
         col.addStretch(1)
 
-        # ------------------------------------------------------- Auto-reading
         col = _tab(tabs, 'Vision')
 
-        vavail = vision.available(self.cfg)
+        vavail = runtime.available(self.cfg)
         va = _sect(col, 'Vision assist (beta)')
         c_vision = _full(va, QCheckBox(
             tr('Recover symbols and dims the PDF text layer misses')),
@@ -898,6 +1089,14 @@ class SettingsMixin:
         cb_voeng.setProperty("i18n_skip", True)
         cb_voeng.setCurrentText(
             str(self.cfg.get("vision_ocr_engine", "rapidocr")).lower())
+        c_vlex = _full(ocr, QCheckBox(
+            tr('Ask about an OCR datum lettered I, O or Q')),
+            "vision_lexicon")
+        c_vlex.setToolTip(tr('The standards never letter a datum I, O or Q, '
+                             'so read off the pixels it is a misread. The '
+                             'row starts unticked in scan review; the '
+                             'letter is never changed.'))
+        c_vlex.setChecked(bool(self.cfg.get("vision_lexicon", True)))
 
         sy = _sect(col, 'Symbols and blocks')
         # && escapes T mnemonic
@@ -1051,11 +1250,9 @@ class SettingsMixin:
         provs = vavail.get("providers") or []
         prov_txt = ", ".join(p.replace("ExecutionProvider", "") for p in provs) \
             or "none"
-        # actual provider not compiled
         _hint(hw, tr('Execution provider in use: %s   (available: %s)')
                   % (tr('GPU + CPU') if vavail.get("gpu")
                      else tr('CPU only'), prov_txt))
-        # why off or degraded
         for _rmsg in (vavail.get("reasons") or {}).values():
             _hint(hw, "! " + _rmsg, "#b7791f")
         _hint(hw, tr('Diagnostics log: %s') % "~/.bubbler.log", "#999999")
@@ -1124,7 +1321,6 @@ class SettingsMixin:
                      'local labelled example (crop + fields, drawing name never '
                      'stored); never sent automatically.'))
 
-        # one opt-in drives both corrections and callouts (acceptances)
         def _sync_corr():
             on = c_corr.isChecked()
             for w in (e_corrdir, b_corrdir, e_accdir, b_accdir):
@@ -1154,7 +1350,6 @@ class SettingsMixin:
         _sync_vision()
         col.addStretch(1)
 
-        # probes on show
         _stat = StatusPanel(self.cfg)
         _statscroll = QScrollArea()
         _statscroll.setWidgetResizable(True)
@@ -1214,7 +1409,6 @@ class SettingsMixin:
                     dlg, tr('Error'),
                     tr('Vision confidences must be between 0 and 1'))
                 return
-            # no loose rung ships
             clean = {}
             for u, edits in dpv.items():
                 got, why = validate_ladder(
@@ -1237,7 +1431,9 @@ class SettingsMixin:
             self.cfg["leaders"] = bool(c_lead.isChecked())
             self.cfg["leader_trim"] = bool(c_ltrim.isChecked())
             try:
-                self.chk_lead.setChecked(self.cfg["leaders"])   # ribbon sync
+                self.chk_lead.blockSignals(True)
+                self.chk_lead.setChecked(leaders_on(self.cfg, self.drawing))
+                self.chk_lead.blockSignals(False)
             except Exception:
                 pass
             self.cfg["tier_shapes"] = bool(c_shapes.isChecked())
@@ -1253,6 +1449,19 @@ class SettingsMixin:
                 self.__dict__.pop("_leadtrim_cache", None)
             self.cfg["obstacle_min_w"] = obsw
             self.cfg["capture_radius"] = caprad
+            self.cfg["auto_toast"] = c_toast.isChecked()
+            self.cfg["placement_box_obstacles"] = c_boxob.isChecked()
+            self.cfg["toast_secs"] = float(sp_tsec.value())
+            self.cfg["toast_stack"] = int(sp_tcap.value())
+            self.cfg["qty_combine"] = cb_qcomb.currentData() or "worst"
+            self.cfg["hole_facet_order"] = [
+                lst_facets.item(i).data(Qt.UserRole)
+                for i in range(lst_facets.count())]
+            self.cfg["hole_facet_skip"] = [
+                lst_facets.item(i).data(Qt.UserRole)
+                for i in range(lst_facets.count())
+                if lst_facets.item(i).data(Qt.UserRole) != "hole"
+                and lst_facets.item(i).checkState() != Qt.Checked]
             _vkeys = ("vision_assist", "vision_ocr", "vision_ocr_always",
                       "vision_ocr_conf", "vision_symbols", "vision_sym_conf",
                       "vision_region", "vision_region_conf", "vision_ep",
@@ -1262,8 +1471,6 @@ class SettingsMixin:
                       "vision_section_group", "vision_gpu")
             _gpu_on = (bool(c_vgpu.isChecked()) if c_vgpu is not None
                        else bool(self.cfg.get("vision_gpu", False)))
-            # a gated box marked Missing is disabled: keep its saved value,
-            # do not let the empty look overwrite the cfg
             def _cv(cb, key):
                 return (bool(cb.isChecked()) if cb.isEnabled()
                         else bool(self.cfg.get(key,
@@ -1281,10 +1488,12 @@ class SettingsMixin:
                      bool(c_vsecgrp.isChecked()), _gpu_on)
             if _vnew != tuple(self.cfg.get(k) for k in _vkeys):
                 self.__dict__.pop("_vword_cache", None)
-                vision.reset_sessions()
+                self._drop_gtols()
+                runtime.reset_sessions()
             self.cfg["vision_assist"] = _vnew[0]
             self.cfg["vision_ocr"] = _vnew[1]
             self.cfg["vision_ocr_always"] = _vnew[2]
+            self.cfg["vision_lexicon"] = bool(c_vlex.isChecked())
             self.cfg["vision_ocr_conf"] = _vnew[3]
             self.cfg["vision_symbols"] = _vnew[4]
             self.cfg["vision_sym_conf"] = _vnew[5]
@@ -1306,7 +1515,6 @@ class SettingsMixin:
             if not self.cfg["vision_debug_overlay"]:
                 self.cfg["vision_debug_on"] = False
             self.cfg["capture_drag_ocr"] = bool(c_vdragocr.isChecked())
-            # one opt-in governs both corrections and callouts (acceptances)
             self.cfg["collect_corrections"] = bool(c_corr.isChecked())
             self.cfg["collect_acceptances"] = bool(c_corr.isChecked())
             self.cfg["corrections_dir"] = e_corrdir.text().strip()
@@ -1314,20 +1522,20 @@ class SettingsMixin:
             _newmodel = e_vmodel.text().strip()
             if _newmodel != (self.cfg.get("vision_model") or ""):
                 self.__dict__.pop("_vword_cache", None)
-                vision.reset_sessions()
+                self._drop_gtols()
+                runtime.reset_sessions()
             self.cfg["vision_model"] = _newmodel
-            self.cfg["gentol_ladder"] = "auto"   # ladder follows the units
             _gon = bool(c_dpon.isChecked())
-            self.cfg["dp_on"] = _gon      # one master flag
+            self.cfg["dp_on"] = _gon
             self.cfg["rib_iso_on"] = _gon  # legacy mirror
             self.cfg["default_iso_class"] = cb_icls.currentText()
             self.cfg["gentol_basic_ref"] = bool(c_brtol.isChecked())
             self.cfg["angular_short_side"] = bool(c_angshort.isChecked())
             for u, got in clean.items():
                 self.cfg[ladder_key(u)] = got
-            self.cfg["gages"] = {k: bool(c.isChecked())
-                                 for k, c in gvars.items()}
             self.cfg["metrology_tools"] = self._read_tool_catalog()
+            if getattr(self, "mhow_cb", None) is not None:
+                self._fill_how()
             try:
                 self.cfg["gage_resolution_ratio"] = \
                     float(self._gage_ratio_edit.text())
@@ -1339,10 +1547,8 @@ class SettingsMixin:
             new_lang = cb_lang.currentData()
             self.cfg["language"] = new_lang
             set_lang(new_lang)
-            self.cfg["mode"] = cb_mode.currentData()
             self.cfg["units"] = cb_units.currentData()
             self.cfg["sheet_lang"] = cb_sheet.currentData()
-            # follows document language
             self.cfg["fai_lang"] = {"both": "en-pl", "en": "en",
                                     "pl": "pl"}.get(cb_sheet.currentData(),
                                                     "en-pl")
@@ -1360,39 +1566,60 @@ class SettingsMixin:
             self.cfg["fai_form_id"] = e_formid.text().strip()
             self.cfg["fai_form_rev"] = e_formrev.text().strip()
             self.cfg["fai_paper"] = cb_paper.currentData() or "a4"
-            self.cfg["fai_report_on"] = c_faion.isChecked()
+            self.cfg["save_output"] = combo_key(cb_out) or "both"
+            self.cfg["report_first"] = c_repfirst.isChecked()
             self.cfg["fai_amber_pct"] = sp_amber.value()
-            self.cfg["fai_customer"] = e_cust.text().strip()
+            self.cfg["fai_img_width_pct"] = sp_imgw.value()
+            self.cfg["fai_img_per_page"] = combo_key(cb_imgpp) or "auto"
+            self.cfg["run_stats"] = [
+                lst_stats.item(i).data(Qt.UserRole)
+                for i in range(lst_stats.count())
+                if lst_stats.item(i).checkState() == Qt.Checked] or ["mean"]
             self.cfg["fai_inspector"] = e_insp.text().strip()
             self.cfg["fai_show"] = {k: bool(c.isChecked())
                                     for k, c in show_cbs.items()}
+            self._follow_default_icls()
             # save before touching writer
             save_cfg(self.cfg)
-            if self.writer is not None:
-                self.writer.sheet_lang = self.cfg["sheet_lang"]
-                self.writer.tier_designator = \
-                    bool(self.cfg["sheet_tier_designator"])
-                self.writer.tier_column = bool(self.cfg["sheet_tier_column"])
             dlg.accept()
-            try:
-                vision.clear_cache()
-                self._apply_ui_scale(rebuild=True)
-                self._apply_mode()
-                retranslate(self)
-                self.render()
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                QMessageBox.warning(
-                    self, tr('Error'),
-                    tr('Settings saved, but applying them failed: %s') % e)
-                self.set_status(tr('settings saved (apply failed)'))
-            else:
+            if self._apply_saved_settings():
                 self.set_status(tr('settings saved'))
+
+        reopen = []
+
+        def reset_all():
+            box = QMessageBox(dlg)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle(tr('Reset all settings'))
+            box.setText(tr('Put every setting back to its default?'))
+            box.setInformativeText(tr(
+                'Your tool catalog, scan presets, operations, gage list, tier '
+                'maps, decimal-place ladders and company details are reset '
+                'too, unless you tick the box below. Recent files and window '
+                'layout are kept. This cannot be undone.'))
+            keep = QCheckBox(tr('Keep my catalogs and company details'))
+            box.setCheckBox(keep)
+            b_go = box.addButton(tr('Reset'), QMessageBox.DestructiveRole)
+            box.addButton(tr('Cancel'), QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is not b_go:
+                return
+            reset_cfg(self.cfg, keep_catalogs=keep.isChecked())
+            save_cfg(self.cfg)
+            self._ui_lang = get_lang()
+            set_lang(self.cfg.get("language", "en"))
+            # stale widgets, must close
+            dlg.reject()
+            if self._apply_saved_settings():
+                self.set_status(tr('settings reset to defaults'))
+            reopen.append(True)
 
         bw = QWidget()
         bl = QHBoxLayout(bw)
         bl.setContentsMargins(0, 0, 0, 0)
+        b_reset = QPushButton(tr('Reset all settings...'))
+        b_reset.clicked.connect(reset_all)
+        bl.addWidget(b_reset)
         bl.addStretch(1)
         b_ok = QPushButton("OK")
         b_ok.setDefault(True)
@@ -1411,9 +1638,59 @@ class SettingsMixin:
         dlg.setMinimumWidth(min(700, cap_w))
         dlg.resize(min(760, cap_w), min(760, cap_h))
         dlg.exec()
+        if reopen:
+            self.settings()
+
+    def _follow_default_icls(self):
+        last = getattr(self, "last", None)
+        if last is None or last.get("icls_hand"):
+            return
+        from .gentol import iso_class_from_gtols
+        printed = None
+        try:
+            for pg in range(self.doc.page_count):
+                printed = iso_class_from_gtols(self._page_gtols(pg))
+                if printed:
+                    break
+        except Exception:
+            printed = None
+        if printed:
+            return
+        last["icls"] = self.cfg.get("default_iso_class", "m")
+        cb = getattr(self, "cb_icls", None)
+        if cb is not None:
+            cb.blockSignals(True)
+            cb.setCurrentText(last["icls"])
+            cb.blockSignals(False)
+        if hasattr(self, "_sync_gentol"):
+            self._sync_gentol()
+
+    def _apply_saved_settings(self):
+        """One apply path for OK and Reset."""
+        if self.writer is not None:
+            self.writer.sheet_lang = self.cfg["sheet_lang"]
+            self.writer.tier_designator = \
+                bool(self.cfg["sheet_tier_designator"])
+            self.writer.tier_column = bool(self.cfg["sheet_tier_column"])
+        try:
+            runtime.clear_cache()
+            # survivors hold old language
+            retranslate(self, prev=getattr(self, "_ui_lang", None))
+            self._apply_ui_scale(rebuild=True)
+            retranslate(self)
+            self._ui_lang = get_lang()
+            self.render()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(
+                self, tr('Error'),
+                tr('Settings saved, but applying them failed: %s') % e)
+            self.set_status(tr('settings saved (apply failed)'))
+            return False
+        return True
 
     def _install_step_pack(self):
-        """Build STEP (OpenCASCADE) venv off-thread"""
         from PySide6.QtCore import QObject, Signal
         prog = QProgressDialog(
             tr('Installing 3D pack (downloads OpenCASCADE, can take a '
@@ -1451,7 +1728,6 @@ class SettingsMixin:
         prog.exec()
 
     def _uninstall_step_pack(self, btn=None):
-        """Remove the STEP pack, after confirming"""
         if not step.is_installed():
             return
         if QMessageBox.question(
@@ -1465,7 +1741,6 @@ class SettingsMixin:
         QMessageBox.information(self, tr('3D pack'), tr('3D pack removed.'))
 
     def _uninstall_gpu_pack(self, btn=None):
-        """Remove the GPU pack, after confirming"""
         if not gpu.is_installed():
             return
         if QMessageBox.question(
@@ -1480,7 +1755,6 @@ class SettingsMixin:
             self._gpu_stat.setText(gpu.status())
         QMessageBox.information(self, tr('GPU pack'), tr('GPU pack removed.'))
 
-    # ---- metrology tool catalog editor -------------------------------------
 
     def _fill_tool_table(self, tools, units):
         """Show the catalog in `units`; stored values are mm."""
@@ -1513,7 +1787,7 @@ class SettingsMixin:
     def _flip_tool_units(self, units):
         if units == self._tool_units[0]:
             return
-        self._fill_tool_table(self._read_tool_catalog(), units)  # convert live
+        self._fill_tool_table(self._read_tool_catalog(), units)
 
     def _read_tool_catalog(self):
         """Read the table back to a catalog list in MILLIMETRES."""
@@ -1545,7 +1819,6 @@ class SettingsMixin:
         return out
 
     def _install_gpu_pack(self):
-        """Build GPU venv off-thread"""
         from PySide6.QtCore import QObject, Signal
         want_cuda = not gpu.has_system_cuda()
         prog = QProgressDialog(
@@ -1569,7 +1842,7 @@ class SettingsMixin:
             except (RuntimeError, AttributeError):
                 pass
             if ok:
-                vision.reset_sessions()
+                runtime.reset_sessions()
                 QMessageBox.information(
                     self, tr('GPU pack'),
                     tr('GPU pack installed. Detectors run on GPU now, CPU if '
@@ -1591,9 +1864,8 @@ class SettingsMixin:
         prog.exec()
 
     def _download_vlm(self, pack, model_combo):
-        """Fetch Florence-2 pack into ~/.bubbler/models"""
         if getattr(self, "_vlm_dl_task", None) is not None:
-            return                               # one download only
+            return
         dest = florence.user_models_dir()
         prog = QProgressDialog(
             tr('Downloading %s...') % pack, tr('Cancel'), 0, 100, self)
@@ -1627,7 +1899,7 @@ class SettingsMixin:
                 model_combo.addItem(pack, pack)
             model_combo.setCurrentIndex(model_combo.findData(pack))
             try:
-                vision.clear_cache()
+                runtime.clear_cache()
             except Exception:
                 pass
             QMessageBox.information(

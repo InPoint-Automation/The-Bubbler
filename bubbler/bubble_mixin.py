@@ -11,16 +11,27 @@ from .common import base_of, fnum, tier_for_type
 from .config import save_cfg, units_of
 from .iso286 import fit_limits, is_fit_code
 from .iso2768 import is_angle_feature
-from .scanlib import (expand_hole_row, scan_parse, scan_normalize,
-                      general_tol)
+from .gentol import general_tol
+from .reader.grammar import scan_normalize
+from .reader.parse import scan_parse
+from .scanrows import expand_hole_row, qty_row
+from .common import count_rows_of
+from .store import ensure_rkeys
 from .dialogs import BubbleDialog
 from .units import format_nominal
 from .i18n import tr
 
 
+
+def _union_rect(rows):
+    rcs = [d["rect"] for d in rows if d.get("rect") and len(d["rect"]) >= 4]
+    if not rcs:
+        return None
+    return (min(r[0] for r in rcs), min(r[1] for r in rcs),
+            max(r[2] for r in rcs), max(r[3] for r in rcs))
+
 class BubbleMixin:
     def _row_tier(self, row):
-        """tier row gets before written"""
         row = row or {}
         return tier_for_type(row.get("type"), self.cfg, row.get("tier", ""))
 
@@ -32,7 +43,7 @@ class BubbleMixin:
         self._new_bubble_at(x, y, None)
 
     def _new_bubble_at(self, x, y, at_screen, prefill=None, rect=None):
-        if self._edit_blocked():          # sealed drops input
+        if self._edit_blocked():
             return
         at = tuple(self.dlg_pos) if self.dlg_pos else at_screen
         nxt = self.store.next_number(self.page_i)
@@ -56,22 +67,70 @@ class BubbleMixin:
         bx, by, lead = self.place_bubble(x, y, rect=rect, lead=want,
                                          tier=tier0)
         uid = self.store.new_uid()
+        prop = (prefill or {}).get("proposal")
+        if prop and dlg.result_rows:
+            main = next((r for r in dlg.result_rows
+                         if r.get("facet") in (None, "hole")),
+                        dlg.result_rows[0])
+            main["proposal"] = dict(prop)
+        made = []
         for d in dlg.result_rows:
             rows = [d] if d.pop("_expanded", False) \
                 else expand_hole_row(d, self.cfg)
             for rr in rows:
                 if not rr.get("gage"):
                     rr["gage"] = self.suggest(rr)
-                rr["leader"] = lead          # flag matches offset
+                rr["leader"] = lead
                 rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
                                            rr.get("tier", ""))
                 rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
                            "bx": bx, "by": by, "sheet_row": None})
                 self.ledger.append(rr)
+                made.append(rr)
+        # "4X" in the text counts too
+        for rr in made:
+            if int(rr.get("qty") or 1) > 1:
+                self._sync_qty_row(rr, getattr(dlg, "qty_ticked", None))
         self.store.renumber()
         self._save_session()
         self.refresh_panel()
         self.render()
+
+    def _sync_qty_row(self, d, want):
+        """Add, update or drop THIS row's count row."""
+        if want is None or d not in self.ledger:
+            return
+        ensure_rkeys(self.ledger)
+        have = count_rows_of(d, self.ledger)
+        n = int(d.get("qty") or 1)
+        if want and n > 1:
+            if have:
+                have[0].update(feature="%dX" % n, nominal=float(n),
+                               qty_of=d["rkey"])
+                return
+            key = d.get("bgroup") or d.get("uid")
+            group = [r for r in self.ledger
+                     if (r.get("bgroup") or r.get("uid")) == key]
+            q = qty_row(n, d)
+            q.update(leader=d.get("leader"), sheet_row=None,
+                     qty_of=d["rkey"])
+            if d.get("bgroup"):
+                q["uid"] = self.store.new_uid()
+                q["bgroup"] = d["bgroup"]
+            at = max(self.ledger.index(r) for r in group) + 1
+            self.ledger.insert(at, q)
+            return
+        cleared = False
+        for r in have:
+            if r.get("sheet_row"):
+                self.writer.clear_row(r["sheet_row"])
+                cleared = True
+            self.ledger.remove(r)
+        if cleared:
+            try:
+                self.writer.save()
+            except Exception:
+                pass
 
     def on_double(self, sp, gpos):
         p = self._page_xy(sp)
@@ -120,13 +179,14 @@ class BubbleMixin:
         try:
             nom = fnum(s)
         except ValueError:
-            QMessageBox.critical(self, tr('Error'), "Bad number: %s" % s)
+            QMessageBox.critical(self, tr('Error'),
+                                 tr('%s: %s is not a number.')
+                                 % (tr('Nominal'), s))
             return
         self._commit_sticky_bubble(p, nom, dp_src=s)
 
     def _commit_sticky_bubble(self, p, nom, dp_src=""):
-        """place bubble using sticky ribbon values"""
-        if self._edit_blocked():          # sealed drops input
+        if self._edit_blocked():
             return
         nxt = self.store.next_number(self.page_i)
         t = self.last.get("type", "dim")
@@ -140,13 +200,20 @@ class BubbleMixin:
             feat = format_nominal(nom, u)
         else:
             feat = ""
-        pin = fnum(self.last.get("pin", "") or "")
+        try:
+            pin = fnum(self.last.get("pin", "") or "")
+            tmax = fnum(self.last.get("tmax", ""))
+            tmin = fnum(self.last.get("tmin", ""))
+        except (TypeError, ValueError, ZeroDivisionError):
+            QMessageBox.critical(
+                self, tr('Error'),
+                tr('The ribbon pin or tolerance holds something that is not '
+                   'a number.'))
+            return
         d = {"bubble": str(nxt), "type": t, "feature": feat,
              "nominal": nom, "tier": self.last.get("tier", ""),
              "pin": pin, "offset": None, "measured": None,
              "tol_sym": None, "tol_max": None, "tol_min": None}
-        tmax = fnum(self.last.get("tmax", ""))
-        tmin = fnum(self.last.get("tmin", ""))
         raw_sym = str(self.last.get("tsym", "") or "").strip()
         metric = units_of(self.cfg, self.drawing) == "iso_mm"
         if metric and is_fit_code(raw_sym):
@@ -164,11 +231,13 @@ class BubbleMixin:
             try:
                 d["tol_sym"] = fnum(raw_sym)
             except ValueError:
-                QMessageBox.critical(self, tr('Error'),
-                                     "Bad tolerance: %s" % raw_sym)
+                msg = (tr('Fit %s is an ISO 286 code for millimetre sizes. '
+                          'This drawing is in inches: enter the tolerance '
+                          'as numbers instead.') if is_fit_code(raw_sym)
+                       else tr('Tolerance %s is not a number.'))
+                QMessageBox.critical(self, tr('Error'), msg % raw_sym)
                 return
         else:
-            # shared answer every path
             res = general_tol({"type": t, "feature": d["feature"],
                                "v": dp_src or d["feature"], "nominal": nom},
                               self.gtols_now(), self.cfg, self.drawing,
@@ -197,7 +266,6 @@ class BubbleMixin:
         self.render()
 
     def _capture_nominal(self, p):
-        """read nominal from PDF text"""
         px, py = p
         box = self._capture_box(px, py)
         res = self._run_capture(self.page_i, box, box,
@@ -217,7 +285,6 @@ class BubbleMixin:
         if not m:
             return None, ""
         try:
-            # whole callout preserved
             return fnum(m.group(0)), src.strip()
         except ValueError:
             return None, ""
@@ -249,7 +316,7 @@ class BubbleMixin:
     def _delete_bases(self, bases):
         if not bases:
             return
-        if self._edit_blocked():          # sealed sheet stays issued
+        if self._edit_blocked():
             return
         self.snapshot()
         uids = set()
@@ -268,11 +335,9 @@ class BubbleMixin:
         self.render()
 
     def toggle_sel_leaders(self):
-        """flip leader flag on selected bubbles"""
         bases = self._sel_bases()
         if not bases:
             return
-        # any off -> all on
         want = not all(self._leader_of(b) for b in bases)
         self.snapshot()
         n = 0
@@ -284,7 +349,9 @@ class BubbleMixin:
                 continue
             ax, ay = rows[0]["x"], rows[0]["y"]
             bx, by, lead = self.place_bubble(ax, ay, lead=want,
-                                             tier=self._row_tier(rows[0]))
+                                             rect=_union_rect(rows),
+                                             tier=self._row_tier(rows[0]),
+                                             skip=b)
             for d in rows:
                 d["leader"] = lead
                 d["bx"], d["by"] = bx, by
@@ -299,7 +366,6 @@ class BubbleMixin:
                          else tr('leaders off for %d bubble(s)')) % n)
 
     def group_selection(self):
-        """H7 one balloon over selected callouts"""
         bases = self._sel_bases()
         rows = [d for d in self.ledger
                 if base_of(d["bubble"]) in bases
@@ -309,14 +375,15 @@ class BubbleMixin:
             self.set_status(tr('select 2 or more bubbles to group'))
             return
         self.snapshot()
-        gid = min(uids)                         # stable group id
+        gid = min(uids)
         ax = sum(d["x"] for d in rows) / len(rows)
         ay = sum(d["y"] for d in rows) / len(rows)
-        want = all(d.get("leader") for d in rows)   # only if all had
+        want = all(d.get("leader") for d in rows)
         bx, by, lead = self.place_bubble(ax, ay, lead=want,
+                                         rect=_union_rect(rows),
                                          tier=self._row_tier(rows[0]))
         for d in rows:
-            d.setdefault("_pre_group_xy", [d["x"], d["y"]])  # for ungroup
+            d.setdefault("_pre_group_xy", [d["x"], d["y"]])
             d["bgroup"] = gid
             d["user_group"] = True
             d["x"], d["y"] = ax, ay
@@ -332,7 +399,6 @@ class BubbleMixin:
         self.set_status(tr('grouped %d bubbles into one') % len(uids))
 
     def ungroup_selection(self):
-        """H7 reverse user Group per uid"""
         bases = self._sel_bases()
         rows = [d for d in self.ledger
                 if base_of(d["bubble"]) in bases
@@ -355,6 +421,7 @@ class BubbleMixin:
             ax, ay = grp[0]["x"], grp[0]["y"]
             want = all(g.get("leader") for g in grp)
             bx, by, lead = self.place_bubble(ax, ay, lead=want,
+                                             rect=_union_rect(grp),
                                              tier=self._row_tier(grp[0]))
             for d in grp:
                 d["bx"], d["by"] = bx, by

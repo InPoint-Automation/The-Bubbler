@@ -19,14 +19,5 @@ Thumbs.db
 /__pycache__
 /config
 
-/train/data/
-/train/runs/
-/train/bgs/
-/train/preds/
 *.pt
-
-/train/fonts/*.ttf
-/train/fonts/*.otf
-/train/fonts/*.TTF
-
 /bubbler/models/florence2-*/

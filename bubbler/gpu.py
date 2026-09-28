@@ -10,12 +10,21 @@ import subprocess
 import sys
 import threading
 
+from . import syspython
 from .gpu_worker import send as _send, recv as _recv
 
 _PRISTINE_ENV = dict(os.environ)
 
 # tracks requirements.txt:37
 GPU_PIN = "onnxruntime-gpu>=1.27,<1.28"
+# CUDA 13 wheels named, extras broken
+CUDA_WHEELS = (
+    "nvidia-cuda-nvrtc>=13.0,<14",
+    "nvidia-cuda-runtime>=13.0,<14",
+    "nvidia-cufft>=12.0,<13",
+    "nvidia-curand>=10.0,<11",
+    "nvidia-cudnn-cu13>=9.0,<10",
+)
 MIN_DRIVER = 580                     # CUDA 13 floor
 
 
@@ -36,7 +45,6 @@ def venv_python():
 
 
 def _child_env():
-    """Scrubbed env"""
     env = dict(_PRISTINE_ENV)
     for k in ("PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE",
               "PYTHONNOUSERSITE", "LD_PRELOAD",
@@ -52,18 +60,19 @@ def _child_env():
     return env
 
 
+_GPU_NAMES = ("python3.12", "python3.11", "python3.10", "python3")
+
+
+def _find_python():
+    return syspython.find(
+        syspython.candidates(windows=False, names=_GPU_NAMES), _child_env())
+
+
 def system_python():
-    """system python3"""
-    env = _child_env()
-    for name in ("python3.12", "python3.11", "python3.10", "python3"):
-        p = shutil.which(name, path=env.get("PATH"))
-        if p and os.path.realpath(p) != os.path.realpath(sys.executable):
-            return p
-    return None
+    return _find_python()[0]
 
 
 def worker_script():
-    """Find loose gpu_worker.py"""
     here = os.path.dirname(os.path.abspath(__file__))
     cands = [os.path.join(here, "gpu_worker.py")]
     try:
@@ -84,7 +93,6 @@ def has_system_cuda():
 
 
 def driver_version():
-    """NVIDIA driver major version or None"""
     try:
         with open("/proc/driver/nvidia/version", encoding="utf-8",
                   errors="replace") as fh:
@@ -96,7 +104,7 @@ def driver_version():
 
 
 def driver_ok():
-    """UNKNOWN driver passes"""
+    """Unknown driver passes."""
     ver = driver_version()
     if ver is None:
         return True, ""
@@ -113,15 +121,14 @@ def is_installed():
 
 
 def install(want_cuda_wheels=True, on_line=None):
-    """Build venv and install onnxruntime-gpu"""
     if not is_linux():
         return False, "GPU pack is Linux only"
     ok, why = driver_ok()
     if not ok:
         return False, why
-    py = system_python()
+    py, tried = _find_python()
     if not py:
-        return False, "no system python3 (install python3 + python3-venv)"
+        return False, syspython.not_found(tried, True)
     try:
         os.makedirs(gpu_root(), exist_ok=True)
     except OSError as e:
@@ -142,9 +149,8 @@ def install(want_cuda_wheels=True, on_line=None):
             return False, "venv failed (need the python3-venv package)"
     vpy = venv_python()
     run([vpy, "-m", "pip", "install", "--upgrade", "pip"])
-    pkg = (GPU_PIN.replace("onnxruntime-gpu", "onnxruntime-gpu[cuda,cudnn]")
-           if want_cuda_wheels else GPU_PIN)
-    if run([vpy, "-m", "pip", "install", "numpy", pkg]) != 0:
+    pkgs = [GPU_PIN] + (list(CUDA_WHEELS) if want_cuda_wheels else [])
+    if run([vpy, "-m", "pip", "install", "numpy"] + pkgs) != 0:
         return False, "onnxruntime-gpu install failed"
     return True, "installed"
 
@@ -154,7 +160,6 @@ def uninstall():
 
 
 class GpuRunner:
-    """Worker subprocess"""
 
     def __init__(self):
         self._proc = None

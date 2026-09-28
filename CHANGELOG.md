@@ -1,5 +1,16 @@
 # Changelog
 
+### Version v0.3.1
+- Fix GPU pack install
+- Report ID on first save
+- Attach images to the inspection report
+- Edit balloon sub-rows in the bubble dialog
+- Right-click a callout to bubble one part of it
+- Header only shows fields the report prints
+- Fix qty values being interpreted as dimensions (well, some of them)
+- Remove Scan page and Scan buttons because they don't work well enough yet
+- General tolerance applied automatically by default
+
 ### Version v0.3.0
 - Better detector model / more classes
 - Inspection report appended to the ballooned PDF

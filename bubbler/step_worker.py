@@ -8,7 +8,6 @@ import numpy as np
 
 
 def _read(step_path):
-    # build123d wraps OCC for clean tessellate
     from build123d import import_step
     solid = import_step(step_path)
     verts, tris = solid.tessellate(tolerance=0.5)

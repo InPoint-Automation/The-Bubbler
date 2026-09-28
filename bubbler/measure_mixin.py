@@ -1,7 +1,7 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Measure-walk behaviour mixed into MainWindow
+# Measure-walk behaviour for MainWindow.
 
 from datetime import datetime
 
@@ -10,18 +10,19 @@ from PySide6.QtCore import Qt, QTimer
 from .calc import eval_measure, split_readings
 from .common import (base_of, tol_text, limits_of, out_of_tol,
                      mirror_measured, measure_state, op_value,
-                     worst_reading, carried_forward, op_scope,
+                     carried_forward, op_scope,
+                     combine_readings, qty_readings,
                      split_method_gage, method_for_gage, has_reading,
-                     NOGO_WORDS)
+                     NOGO_WORDS, METHODS)
 from .config import (MEASURE_UNITS, measure_units, save_cfg, units_of,
                      ops_seq, register_op)
+from .gaging import gage_choices
 from .i18n import tr
 from .units import (INCH, convert_units, format_converted,
                     format_nominal, other_units, unit_suffix)
 
 
 def _num(txt):
-    """Reading text -> float or None on GO/NOGO/junk."""
     try:
         return float(str(txt).replace(",", "."))
     except (TypeError, ValueError):
@@ -34,7 +35,7 @@ class MeasureMixin:
 
     def _set_measure(self, on):
         on = bool(on)
-        if on and self._edit_blocked():   # sealed no walk
+        if on and self._edit_blocked():
             try:
                 self.btn_measure.setChecked(False)
             except Exception:
@@ -106,7 +107,7 @@ class MeasureMixin:
         alt = self._alt_readout(d)
         if alt:
             nom += "   [%s]" % alt
-        qn = int(d.get("qty") or 1)
+        qn = qty_readings(d, self.ledger)
         qtag = ("  ×%d" % qn) if qn > 1 else ""
         self.mlab.setText("#%s  %s%s%s" % (d["bubble"],
                                            d.get("feature", ""), qtag, nom))
@@ -132,7 +133,6 @@ class MeasureMixin:
         if self.panel_visible and idx < len(self.ledger):
             self._panel_highlight(idx, scroll=True)
 
-    # ---- entry unit system ----
 
     def _fill_munits(self):
         """Both choices rebuilt so "other" never goes stale."""
@@ -148,7 +148,6 @@ class MeasureMixin:
         self._sync_measure_units()
 
     def _entry_units(self):
-        """Unit system inspector types in."""
         return measure_units(self.cfg, self.drawing)
 
     def _drawing_units(self):
@@ -158,20 +157,21 @@ class MeasureMixin:
         """Pick entry system without rewriting stored readings."""
         if mode not in MEASURE_UNITS:
             return
-        self.cfg["measure_units"] = mode
-        save_cfg(self.cfg)
+        self.drawing["measure_units"] = mode
+        if not self.store.read_only:
+            self._save_session()
         self._sync_measure_units()
         if self.measure_mode:
             self._walk_show()
 
     def _sync_measure_units(self):
-        """Label entry with system read in."""
         cb = getattr(self, "munits_cb", None)
         if cb is None:
             return
         self._mbar_sync = True
-        cb.setCurrentIndex(
-            1 if str(self.cfg.get("measure_units")) == "other" else 0)
+        mode = (self.drawing or {}).get("measure_units") \
+            or self.cfg.get("measure_units")
+        cb.setCurrentIndex(1 if str(mode) == "other" else 0)
         self._mbar_sync = False
         u = unit_suffix(self._entry_units())
         self.ment.setPlaceholderText(u)
@@ -197,7 +197,6 @@ class MeasureMixin:
         return format_converted(convert_units(v, src, dst), dst)
 
     def _from_drawing_units(self, txt):
-        """Stored reading -> entry units for field."""
         src, dst = self._drawing_units(), self._entry_units()
         if src == dst:
             return txt
@@ -207,13 +206,11 @@ class MeasureMixin:
         return format_converted(convert_units(v, src, dst), dst)
 
     def _entry_text(self, stored):
-        """Field text for stored reading remembering exact pair."""
         txt = self._from_drawing_units(stored)
         self._entry_echo = (txt, str(stored))
         return txt
 
     def _alt_readout(self, d):
-        """Same requirement in entry system or "" when matched."""
         src, dst = self._drawing_units(), self._entry_units()
         if src == dst:
             return ""
@@ -222,9 +219,9 @@ class MeasureMixin:
         if lim is not None:
             lo, hi = lim
             suf = unit_suffix(dst)
-            if lo is None:           # open below
+            if lo is None:
                 return "<= %s %s" % (fmt % convert_units(hi, src, dst), suf)
-            if hi is None:           # open above
+            if hi is None:
                 return ">= %s %s" % (fmt % convert_units(lo, src, dst), suf)
             return "%s-%s %s" % (fmt % convert_units(lo, src, dst),
                                  fmt % convert_units(hi, src, dst), suf)
@@ -242,7 +239,7 @@ class MeasureMixin:
         self.view.centerOn(self._scr(bx, by))
 
     def _measure_enter(self):
-        """second Enter saves for math"""
+        """Second Enter saves for math."""
         if not self._walk:
             return
         idx = self._walk[self._walk_idx]
@@ -250,7 +247,7 @@ class MeasureMixin:
             self._walk_show()
             return
         d = self.ledger[idx]
-        qty = int(d.get("qty") or 1)
+        qty = qty_readings(d, self.ledger)
         raw = self.ment.text()
         tokens = split_readings(raw)
 
@@ -310,8 +307,7 @@ class MeasureMixin:
         self._walk_commit_readings([val] if val else [], delta)
 
     def _walk_commit_readings(self, readings, delta):
-        """Record readings on current row."""
-        if self._edit_blocked():          # sealed refuse never absorb
+        if self._edit_blocked():
             return
         idx = self._walk[self._walk_idx]
         if idx >= len(self.ledger):
@@ -320,9 +316,9 @@ class MeasureMixin:
         d = self.ledger[idx]
         clean = [self._to_drawing_units(str(r).strip())
                  for r in readings if str(r).strip() != ""]
-        here = self._reading_here(d)      # stage reading now
+        here = self._reading_here(d)
         old = "" if here in (None, "") else str(here)
-        new_worst = str(worst_reading(clean, d) or "")
+        new_worst = str(combine_readings(clean, d, self._combine()) or "")
         if new_worst != old:
             self.snapshot()
             self._record_op(d, clean)
@@ -330,7 +326,7 @@ class MeasureMixin:
             self.refresh_panel()
         extra = ""
         level = None
-        worst = self._reading_here(d)     # no verdict if unread
+        worst = self._reading_here(d)
         if worst not in (None, ""):
             if out_of_tol(dict(d, measured=worst)):
                 lim = limits_of(d)
@@ -346,7 +342,6 @@ class MeasureMixin:
                          % (d["bubble"], rng)).rstrip()
                 level = "warn"
             else:
-                # name unit when converted
                 u = ("" if self._entry_units() == self._drawing_units()
                      else " " + unit_suffix(self._drawing_units()))
                 extra = "#%s = %s%s" % (d["bubble"], worst, u)
@@ -354,7 +349,6 @@ class MeasureMixin:
             self._measure_flash(level)
         nxt = self._next_walk_idx(delta)
         if nxt is None:
-            # stay verdict stays visible
             self.set_status(("%s   " % extra if extra else "")
                             + self._measure_summary(), icon=level)
             self._walk_show()
@@ -365,7 +359,6 @@ class MeasureMixin:
             self.set_status(extra, icon=level)
 
     def _next_walk_idx(self, delta):
-        """Next walk position."""
         n = len(self._walk)
         if self._skip_filled():
             i = self._walk_idx + delta
@@ -392,13 +385,11 @@ class MeasureMixin:
                 % (filled, total, self._walk_oot_count()))
 
     def _measure_flash(self, level):
-        """Tint entry green in-tol / red out."""
         col = "#f8d7da" if level == "warn" else "#d4edda"
         self.ment.setStyleSheet("background:%s;" % col)
         QTimer.singleShot(400, lambda: self.ment.setStyleSheet(""))
 
     def _update_prev_label(self, d):
-        """Op reading or carry-forward known here."""
         lab = getattr(self, "mprev", None)
         if lab is None:
             return
@@ -429,13 +420,12 @@ class MeasureMixin:
         return op_value(rec, d) if has_reading(rec) else None
 
     def _measure_clear(self):
-        """Clear current op reading for re-measure."""
         if not self._walk:
             return
         idx = self._walk[self._walk_idx]
         if idx >= len(self.ledger):
             return
-        if self._edit_blocked():          # sealed refuse never absorb
+        if self._edit_blocked():
             return
         d = self.ledger[idx]
         self.snapshot()
@@ -447,15 +437,30 @@ class MeasureMixin:
         self.ment.setFocus()
         self._walk_show()
 
-    # ---- one control for how measurement taken ----
 
     def _how_text(self, d):
-        """How-combo shows op record else gage."""
         rec = (d.get("ops") or {}).get(self._current_op()) or {}
         return rec.get("gage") or rec.get("method") or d.get("gage") or ""
 
+    def _fill_how(self):
+        """Picked list so split_method_gage never meets typo."""
+        cb = self.mhow_cb
+        cur = cb.currentText()
+        items = [""] + list(METHODS)
+        seen = {x.lower() for x in items}
+        for name in gage_choices(self.cfg):
+            if name and name.lower() not in seen:
+                items.append(name)
+                seen.add(name.lower())
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItems(items)
+        if cur and cb.findText(cur) < 0:
+            cb.addItem(cur)
+        cb.setCurrentText(cur)
+        cb.blockSignals(False)
+
     def _how_now(self, d=None):
-        """(gage, method) bar set to now."""
         cb = getattr(self, "mhow_cb", None)
         txt = cb.currentText() if cb is not None else ""
         method, gage = split_method_gage(txt, (d or {}).get("gage"))
@@ -464,7 +469,7 @@ class MeasureMixin:
     def _mhow_changed(self, txt):
         if self._mbar_sync or not self._walk:
             return
-        if self._edit_blocked():          # sealed refuse never absorb
+        if self._edit_blocked():
             return
         idx = self._walk[self._walk_idx]
         if idx < len(self.ledger):
@@ -479,10 +484,8 @@ class MeasureMixin:
             self._save_session()
             self.refresh_panel()
 
-    # ---- per-characteristic plan ----
 
     def _sync_plan(self, d):
-        """Show row made_at / recheck on bar."""
         cb = getattr(self, "mmade_cb", None)
         if cb is not None:
             want = str(d.get("made_at") or "")
@@ -533,14 +536,12 @@ class MeasureMixin:
         return getattr(self, "_measure_op", None) or self._op_seq()[0]
 
     def _op_seq(self):
-        """Drawing machining sequence in order."""
         return ops_seq(self.cfg, getattr(self, "drawing", None))
 
     def _skip_filled(self):
         return bool(self.cfg.get("measure_skip_filled", True))
 
     def _needs_measuring(self, d):
-        """In scope for op and unread here."""
         cur = self._current_op()
         if not op_scope(d, cur, self._op_seq()) in ("machined", "recheck",
                                                     "new"):
@@ -548,7 +549,6 @@ class MeasureMixin:
         return not has_reading((d.get("ops") or {}).get(cur))
 
     def _mop_changed(self, txt):
-        """Switch inspected STAGE so scope follows."""
         self._measure_op = txt or self._op_seq()[0]
         if txt:
             register_op(txt, self.cfg, getattr(self, "drawing", None))
@@ -559,12 +559,15 @@ class MeasureMixin:
         self.cfg["measure_skip_filled"] = bool(on)
         save_cfg(self.cfg)
 
+    def _combine(self):
+        return ("average" if self.cfg.get("qty_combine") == "average"
+                else "worst")
+
     def _record_op(self, d, val):
         gage, method = self._how_now(d)
         self._record_op_into(d, self._current_op(), val, gage, method)
 
     def _record_op_into(self, d, op, val, gage, method=None):
-        """One measurement record of readings method gage op ts."""
         vals = val if isinstance(val, (list, tuple)) else [val]
         readings = [str(v).strip() for v in vals if str(v).strip() != ""]
         seq = register_op(op, self.cfg, getattr(self, "drawing", None))
@@ -572,8 +575,10 @@ class MeasureMixin:
         if readings:
             if method is None:
                 method = method_for_gage(gage)
+            how = self._combine()
             ops[op] = {"readings": readings,
-                       "measured": worst_reading(readings, d),
+                       "measured": combine_readings(readings, d, how),
+                       "combine": how,
                        "method": method or None,
                        "gage": gage or None,
                        "ts": datetime.now().isoformat(timespec="minutes")}

@@ -9,7 +9,6 @@ UNKNOWN = "unknown"
 MM = "iso_mm"
 INCH = "asme_inch"
 
-# verdict thresholds
 MIN_TOTAL = 3.0
 MIN_MARGIN = 0.34
 MIN_CONF = 0.25
@@ -32,7 +31,6 @@ _INCH_STATED = re.compile(
     r"|\bDECIMAL\s+INCH(?:ES)?\b",
     re.I)
 
-# metric standards imply mm
 _METRIC_STD = re.compile(
     r"\bISO\s*[- ]?\s*(?:2768|8015|22081|1101|286)\b"
     r"|\bDIN\s*[- ]?\s*(?:7168|ISO)\b|\bEN\s*22768\b", re.I)
@@ -59,7 +57,6 @@ _NUMBER = re.compile(r"(?<![\d.,])\d+[.,]\d+(?![\d.,])")
 
 
 def _dp_distribution(text):
-    """fine vs coarse decimal counts for inch check"""
     fine = coarse = 0
     for m in _NUMBER.finditer(text):
         dp = len(m.group(0).replace(",", ".").split(".", 1)[1])
@@ -71,7 +68,6 @@ def _dp_distribution(text):
 
 
 def detect_units(text):
-    """unit-system verdict off drawing's text layer"""
     t = text or ""
     sig = []
 
@@ -132,7 +128,6 @@ def detect_units(text):
 
 
 def detect_units_doc(doc, max_pages=4):
-    """same verdict over first pages of open fitz doc"""
     parts = []
     try:
         n = min(int(getattr(doc, "page_count", 0) or 0), max_pages)
@@ -155,7 +150,6 @@ def unit_suffix(units):
 
 
 def other_units(units):
-    """other system mm <-> inch"""
     return MM if units == INCH else INCH
 
 
@@ -177,14 +171,12 @@ NOMINAL_DP = {MM: 2, INCH: 4}
 
 
 def format_nominal(v, units):
-    """nominal as shown in drawing's own system"""
     if v is None:
         return ""
     return "%.*f" % (NOMINAL_DP.get(units, 2), float(v))
 
 
 def format_converted(v, units):
-    """converted field text with trailing zeros gone"""
     if v is None:
         return ""
     s = "%.*f" % (DISPLAY_DP.get(units, 4), float(v))

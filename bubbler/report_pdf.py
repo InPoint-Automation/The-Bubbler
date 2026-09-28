@@ -11,7 +11,6 @@ import fitz
 from .config import FAI_SHOW_COLUMNS, FAI_SHOW_FIELDS
 from .reportrow import summary as _summary
 
-# ---------------------------------------------------------------- labels
 
 LABELS = {
     "en": {
@@ -68,7 +67,6 @@ def Lt(key, lang):
     return L(key, lang).replace("<br>", " / ")
 
 
-# config owns field/column switches
 OPTIONAL_FIELDS = FAI_SHOW_FIELDS
 OPTIONAL_COLUMNS = FAI_SHOW_COLUMNS
 
@@ -89,8 +87,6 @@ DISPOSITION = {"ACCEPTED": ("accepted", "acc"), "REJECTED": ("rejected", "rej"),
                "IN PROGRESS": ("in_progress", "")}
 
 AMBER_PCT = 90              # % of half-width
-
-# ---------------------------------------------------------------- row view
 
 
 def _band(row):
@@ -117,8 +113,6 @@ def _measured_text(m):
         return "%.3f" % m
     return "" if m is None else str(m)
 
-
-# ---------------------------------------------------------------- layout
 
 MARGIN = 36
 _W = 523.0                       # A4-tuned body width
@@ -173,7 +167,6 @@ def _title_key(hdr):
 
 
 def _head_html(hdr, rows, lang, full, step_uri=None):
-    """Title header block and summary compact past page 1."""
     h = ["<style>%s</style>" % CSS_TEMPLATE.replace("{W}", str(W))]
     h.append(
         "<table class='title' style='%s'><tr><td style='%s'>"
@@ -201,11 +194,10 @@ def _head_html(hdr, rows, lang, full, step_uri=None):
         return "".join(h)
 
     s = _summary(rows)
-    yld = "%.1f %%" % (s["yield"] * 100.0) if s["yield"] is not None else "—"
+    yld = "%.1f %%" % (s["yield"] * 100.0) if s["yield"] is not None else "\u2014"
     dkey, dcls = DISPOSITION.get(s["disposition"], ("in_progress", ""))
 
-    # fixed fields then optional
-    # 3 per row pad square
+    # fixed then optional, 3 per row
     fields = [("part_no", hdr.get("part_no", ""))]
     for key in OPTIONAL_FIELDS:
         if opts.get(key, True):
@@ -237,7 +229,6 @@ def _head_html(hdr, rows, lang, full, step_uri=None):
 
 
 def _columns(show):
-    """Enabled columns rescaled to fill table width."""
     cols = [c for c in COLUMNS
             if c[0] not in OPTIONAL_COLUMNS or show.get(c[0], True)]
     widths = {c[0]: c[2] for c in cols}
@@ -281,7 +272,6 @@ def _table_html(rows, lang, show=None):
 
 
 def _result_text(res, lang):
-    """Localize the PASS/FAIL verdict for the result cell."""
     if res not in ("PASS", "FAIL"):
         return res
     key = "pass" if res == "PASS" else "fail"
@@ -291,7 +281,6 @@ def _result_text(res, lang):
 
 
 def _sig_line(role_key, lang, name="", date=""):
-    """Signature line role and name/date under rule."""
     name, date = esc(name).strip(), esc(date).strip()
     tail = ("%s&nbsp;&nbsp;&nbsp;&nbsp;%s" % (name, date)).strip() \
         if (name or date) else Lt("sig_name_date", lang)
@@ -304,14 +293,11 @@ def _sig_html(lang, qa=True, inspector="", date=""):
     if not qa:
         return ("<table class='sig'><tr>%s<td style='%s'></td></tr></table>"
                 % (insp, _w(276)))
-    # reviewer signs later
     return (
         "<table class='sig'><tr>%s<td style='%s'></td>"
         "<td style='%s'>%s</td></tr></table>"
         % (insp, _w(47), _w(229), _sig_line("sig_qa", lang)))
 
-
-# ---------------------------------------------------------------- render
 
 ROWS_MAX = 60  # max tried per page
 
@@ -322,7 +308,6 @@ def _fits(html_, body):
 
 
 def _max_rows_fitting(head, rows, lang, body, tail="", show=None):
-    """Largest k such that head + table(rows[:k]) + tail fits in body."""
     lo, hi = 1, min(ROWS_MAX, len(rows))
     if not rows:
         return 0
@@ -339,13 +324,12 @@ def _max_rows_fitting(head, rows, lang, body, tail="", show=None):
 
 def append_report_pages(doc, hdr, rows, lang="en", logo=None, paper="a4",
                         amber_pct=AMBER_PCT, step_img=None):
-    """Append portrait report pages to doc returning count."""
     global W
     rows = list(rows or [])
     if not rows:
         return 0
     rect = fitz.paper_rect(paper)              # "a4" or "letter"
-    if rect.width < 100 or rect.height < 100:  # degenerate rect
+    if rect.width < 100 or rect.height < 100:
         rect = fitz.paper_rect("a4")
     margin = MARGIN
     body = rect + (margin, margin + 8, -margin, -margin - 18)  # footer room
@@ -360,18 +344,18 @@ def append_report_pages(doc, hdr, rows, lang="en", logo=None, paper="a4",
         step_uri = ("data:image/png;base64,"
                     + base64.b64encode(step_img).decode("ascii"))
     pages_html = []
-    page_slices = []               # rows per page
+    page_slices = []
     i, first = 0, True
     while True:
         head = _head_html(hdr, rows, lang, full=first, step_uri=step_uri)
         rest = rows[i:]
         k_sig = _max_rows_fitting(head, rest, lang, body, tail=sig, show=show)
-        if k_sig >= len(rest):                      # last page sig fits
+        if k_sig >= len(rest):
             pages_html.append(head + _table_html(rest, lang, show) + sig)
             page_slices.append(rest)
             break
         k = _max_rows_fitting(head, rest, lang, body, show=show)
-        if k >= len(rest):                          # rows fit not sig
+        if k >= len(rest):
             pages_html.append(head + _table_html(rest, lang, show))
             page_slices.append(rest)
             pages_html.append(_head_html(hdr, rows, lang, full=False) + sig)
@@ -406,7 +390,6 @@ def append_report_pages(doc, hdr, rows, lang="en", logo=None, paper="a4",
     # build in throwaway doc
     rep = fitz.open("pdf", buf.getvalue())
     added = rep.page_count
-    # page-local row index
     for pno, ridx, cell in bars:
         slc = page_slices[pno]
         if ridx < len(slc):
@@ -436,6 +419,153 @@ def append_report_pages(doc, hdr, rows, lang="en", logo=None, paper="a4",
     return added
 
 
+IMG_PER_PAGE = ("auto", "1", "2", "4")
+_CAPTION_H = 12.0                 # pt under each image
+_GAP = 10.0                       # pt between images
+
+
+def _used_bottom(page, margin):
+    y = margin
+    try:
+        for b in page.get_text("blocks"):
+            if b[3] < page.rect.height - margin - 20:
+                y = max(y, b[3])
+        for d in page.get_drawings():
+            r = d.get("rect")
+            if r is not None and r.y1 < page.rect.height - margin - 20:
+                y = max(y, r.y1)
+    except Exception:
+        return page.rect.height                 # unknown: treat as full
+    return y
+
+
+def _img_size(stream):
+    try:
+        pm = fitz.Pixmap(stream)
+        return float(pm.width), float(pm.height)
+    except Exception:
+        return None
+
+
+def _place(page, box, stream, caption):
+    wh = _img_size(stream)
+    if not wh or wh[0] <= 0 or wh[1] <= 0:
+        return False
+    iw, ih = wh
+    room_h = box.height - (_CAPTION_H if caption else 0)
+    s = min(box.width / iw, room_h / ih)
+    w, h = iw * s, ih * s
+    x0 = box.x0 + (box.width - w) / 2.0
+    r = fitz.Rect(x0, box.y0, x0 + w, box.y0 + h)
+    try:
+        page.insert_image(r, stream=stream)
+    except Exception:
+        return False
+    if caption:
+        page.insert_textbox(fitz.Rect(box.x0, r.y1 + 1, box.x1,
+                                      r.y1 + _CAPTION_H + 1),
+                            caption, fontsize=7, fontname="helv", align=1,
+                            color=(0.25, 0.25, 0.25))
+    return True
+
+
+def append_images(doc, images, width_pct=100, per_page="auto", paper="a4",
+                  first_page=None, margin=None):
+    """Report's last page fills first. Returns images drawn."""
+    margin = MARGIN if margin is None else margin
+    rect = fitz.paper_rect(paper)
+    if rect.width < 100 or rect.height < 100:
+        rect = fitz.paper_rect("a4")
+    width = rect.width - 2 * margin
+    bottom = rect.height - margin - 22           # footer room
+    todo = [(b, c) for b, c in (images or []) if b]
+    drawn = 0
+
+    def new_page():
+        return doc.new_page(width=rect.width, height=rect.height)
+
+    if per_page in ("1", "2", "4"):
+        n = int(per_page)
+        cols = 2 if n == 4 else 1
+        rows = n // cols
+        cw = (width - _GAP * (cols - 1)) / cols
+        ch = (bottom - margin - _GAP * (rows - 1)) / rows
+        # report page's free rows first
+        cells = []
+        if first_page is not None:
+            y0 = _used_bottom(first_page, margin) + _GAP
+            while y0 + ch <= bottom + 0.5:
+                for c_ in range(cols):
+                    x = margin + c_ * (cw + _GAP)
+                    cells.append((first_page, fitz.Rect(x, y0, x + cw,
+                                                        y0 + ch)))
+                y0 += ch + _GAP
+        for b, c in todo:
+            if not cells:
+                page = new_page()
+                for i in range(n):
+                    x = margin + (i % cols) * (cw + _GAP)
+                    y = margin + (i // cols) * (ch + _GAP)
+                    cells.append((page, fitz.Rect(x, y, x + cw, y + ch)))
+            pg, box = cells.pop(0)
+            drawn += _place(pg, box, b, c)
+        return drawn
+
+    target = width * max(10, min(100, int(width_pct or 100))) / 100.0
+    per_row = max(1, int((width + 0.5) // target))
+    target = min(target, (width - _GAP * (per_row - 1)) / per_row)
+    page, y = None, None
+    if first_page is not None:
+        page, y = first_page, _used_bottom(first_page, margin) + _GAP
+    row = []                                     # [(bytes, caption, h)]
+
+    def flush():
+        nonlocal page, y
+        if not row:
+            return 0
+        h = max(r[2] for r in row)
+        if page is None or y + h > bottom:
+            if page is not None and page is first_page \
+                    and bottom - y >= 0.5 * h:
+                h = bottom - y
+            else:
+                page, y = new_page(), margin
+        span = len(row) * target + (len(row) - 1) * _GAP
+        x = margin + (width - span) / 2.0
+        n = 0
+        for b, c, _h in row:
+            n += _place(page, fitz.Rect(x, y, x + target, y + h), b, c)
+            x += target + _GAP
+        y += h + _GAP
+        del row[:]
+        return n
+    for b, c in todo:
+        wh = _img_size(b)
+        if not wh:
+            continue
+        h = min(target * wh[1] / wh[0] + (_CAPTION_H if c else 0),
+                bottom - margin)
+        row.append((b, c, h))
+        if len(row) >= per_row:
+            drawn += flush()
+    drawn += flush()
+    return drawn
+
+
+def stamp_footer(page, hdr, label, margin=None):
+    """No packet page goes out unnamed."""
+    margin = MARGIN if margin is None else margin
+    r = page.rect
+    txt = "%s    %s    %s    %s" % (hdr.get("form_id", ""),
+                                    esc(hdr.get("report_id")),
+                                    esc(hdr.get("part_no")), label)
+    page.draw_line((margin, r.height - margin - 2),
+                   (r.width - margin, r.height - margin - 2),
+                   color=(0, 0, 0), width=0.4)
+    page.insert_text((margin, r.height - margin + 6), txt, fontsize=7,
+                     color=(0.35, 0.35, 0.35), fontname="helv")
+
+
 BAR_GREEN = (0.15, 0.45, 0.15)
 BAR_AMBER = (0.75, 0.55, 0.05)
 BAR_RED = (0.70, 0.10, 0.10)
@@ -443,7 +573,6 @@ BAR_GREY = (0.55, 0.55, 0.55)
 
 
 def _bar_color(pct, amber_pct=AMBER_PCT, failed=None):
-    """Marker colour from zone percentage and verdict."""
     if failed:
         return BAR_RED
     if failed is None and pct > 100:
@@ -454,7 +583,6 @@ def _bar_color(pct, amber_pct=AMBER_PCT, failed=None):
 
 
 def _draw_tol_bar(page, cell, r, amber_pct=AMBER_PCT):
-    """Metrolog-style tolerance bar in deviation cell."""
     band = _band(r)
     pct = _zone_pct(r, band)
     if band is None or pct is None:
@@ -472,9 +600,9 @@ def _draw_tol_bar(page, cell, r, amber_pct=AMBER_PCT):
         return x0 + (v - (lo - over)) / (span + 2 * over) * w
 
     sh = page.new_shape()
-    sh.draw_line((x0, y), (x1, y))                       # track
+    sh.draw_line((x0, y), (x1, y))
     sh.finish(color=BAR_GREY, width=0.5)
-    sh.draw_rect(fitz.Rect(X(lo), y - 3, X(hi), y + 3))   # tolerance zone
+    sh.draw_rect(fitz.Rect(X(lo), y - 3, X(hi), y + 3))
     sh.finish(color=None, fill=(0.90, 0.90, 0.90))
     for v, hh in ((lo, 4), (c, 5), (hi, 4)):
         sh.draw_line((X(v), y - hh), (X(v), y + hh))

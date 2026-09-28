@@ -4,28 +4,20 @@
 # Title-block autofill via bottom-right heuristic.
 
 from .i18n import tr
-from .titleblock import parse_titleblock
+from .titleblock import default_rect, parse_titleblock
 
 
 class TitleblockMixin:
     def _titleblock_rect(self, page):
         r = page.rect
-        w, h = r.width, r.height
-        x0 = r.x0 + 0.55 * w
-        y0 = r.y0 + 0.72 * h
-        x1 = r.x1
-        y1 = r.y1
-        x0 = max(r.x0, min(x0, r.x1))
-        y0 = max(r.y0, min(y0, r.y1))
-        x1 = max(r.x0, min(x1, r.x1))
-        y1 = max(r.y0, min(y1, r.y1))
-        return (x0, y0, x1, y1)
+        return default_rect((r.x0, r.y0, r.x1, r.y1))
 
     def _read_titleblock(self, page_i, rect):
         x0, y0, x1, y1 = rect
         sel_rect = (x0 - 2, y0 - 2, x1 + 2, y1 + 2)
         res = self._run_capture(page_i, rect, sel_rect,
-                                want_meta=False, want_hits=False)
+                                want_meta=False, want_hits=False,
+                                ocr_fallback=True)
         if res is None or not res.get("sel"):
             self.set_status(tr('no title block found'))
             return {}

@@ -8,10 +8,16 @@ import sys
 import fitz
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from . import vision
-from .scanlib import (scan_normalize, scan_parse,
-                      parse_general_tols, inherit_gtols)
-from .scanpos import scan_words, page_words
+from .reader import pipeline
+from .reader.vision import runtime
+from .gentol import inherit_gtols
+from .reader.grammar import scan_normalize
+from .reader.parse import scan_parse
+from .gentol import page_general_tols
+from .reader.geometry import words_in_rect
+from .reader.layout import reading_order_lines
+from .reader.parse import scan_words
+from .reader.textlayer import page_words
 
 
 def _aug_words(doc, page_i, cfg, cache):
@@ -22,7 +28,7 @@ def _aug_words(doc, page_i, cfg, cache):
         base = page_words(page)
         words = base
         try:
-            words = vision.augment_words(page, list(base), cfg)
+            words = pipeline.augment_words(page, list(base), cfg)
         except Exception as e:
             print("bubbler: vision assist skipped (%s)" % e, file=sys.stderr)
         cache[page_i] = words
@@ -31,14 +37,16 @@ def _aug_words(doc, page_i, cfg, cache):
 
 def _scan_hits(doc, page_i, cfg, words, include_bare=True, allow_vlm=True):
     try:
-        hits = vision.extract_hits(doc[page_i], cfg, rect=None,
+        hits = pipeline.extract_hits(doc[page_i], cfg, rect=None,
                                    include_bare=include_bare, words=words,
                                    allow_vlm=allow_vlm, on_slow=None)
         if hits is not None:
             return hits
     except Exception as e:
         print("bubbler: extract_hits skipped (%s)" % e, file=sys.stderr)
-    return scan_words(words, include_bare=include_bare, cfg=cfg)
+    return pipeline.drop_zone_labels(
+        doc[page_i], scan_words(words, include_bare=include_bare, cfg=cfg),
+        words)
 
 
 def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
@@ -52,11 +60,12 @@ def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
             return None
         try:
             page = doc[pg]
+            words = _aug_words(doc, pg, cfg, vwords)
             try:
-                gtols[pg] = parse_general_tols(page.get_text("text"))
+                # OCR words on scans
+                gtols[pg] = page_general_tols(page, words)
             except Exception:
                 gtols[pg] = {}
-            words = _aug_words(doc, pg, cfg, vwords)
             if words:
                 any_text = True
                 pos_hits = _scan_hits(doc, pg, cfg, words)
@@ -85,7 +94,6 @@ def scan_pages(doc, cfg, pages, progress=None, cancelled=None):
 
 
 def _inherit_offscan(doc, gtols, pages):
-    """Single-page scan inherits unscanned sheet's block"""
     if any(gtols.get(pg) for pg in pages):
         return gtols
     try:
@@ -99,7 +107,7 @@ def _inherit_offscan(doc, gtols, pages):
         if pg in seen:
             continue
         try:
-            g = parse_general_tols(doc[pg].get_text("text"))
+            g = page_general_tols(doc[pg])
         except Exception:
             continue
         if g:
@@ -111,30 +119,11 @@ def _inherit_offscan(doc, gtols, pages):
 
 
 def _words_in_rect(words, rx0, ry0, rx1, ry1):
-    out = []
-    for w in words:
-        wx0, wy0, wx1, wy1 = w[0], w[1], w[2], w[3]
-        ix = min(rx1, wx1) - max(rx0, wx0)
-        iy = min(ry1, wy1) - max(ry0, wy0)
-        if ix <= 0 or iy <= 0:
-            continue
-        area = max((wx1 - wx0) * (wy1 - wy0), 1e-6)
-        cx, cy = (wx0 + wx1) / 2.0, (wy0 + wy1) / 2.0
-        if (ix * iy) / area >= 0.30 or (rx0 <= cx <= rx1 and ry0 <= cy <= ry1):
-            out.append(w)
-    return out
+    return words_in_rect(words, rx0, ry0, rx1, ry1)
 
 
 def _words_text(words):
-    words = sorted(words, key=lambda w: (w[5], w[6], w[7]))
-    lines, key = [], None
-    for w in words:
-        k = (w[5], w[6])
-        if k != key:
-            lines.append([])
-            key = k
-        lines[-1].append(w[4])
-    return "\n".join(" ".join(l) for l in lines)
+    return "\n".join(" ".join(l) for l in reading_order_lines(words))
 
 
 def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
@@ -145,7 +134,7 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
     forced = False
     if force_read:
         try:
-            sel = vision.read_rect_words(doc[page_i], cfg, sel_rect,
+            sel = pipeline.read_rect_words(doc[page_i], cfg, sel_rect,
                                          use_vlm=(force_read == "vlm"))
         except Exception as e:
             print("bubbler: forced capture read failed (%s)" % e,
@@ -160,7 +149,7 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
     if not sel and ocr_fallback and not force_read:
         # snapped click, empty text layer: read pixels
         try:
-            sel = vision.read_rect_words(doc[page_i], cfg, sel_rect,
+            sel = pipeline.read_rect_words(doc[page_i], cfg, sel_rect,
                                          use_vlm=bool(cfg.get("vision_vlm")))
         except Exception as e:
             print("bubbler: click OCR fallback failed (%s)" % e,
@@ -174,7 +163,7 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
         return out
     if want_meta and not forced:
         try:
-            out["meta"] = vision.meta_region_at(doc[page_i], cfg, rect)
+            out["meta"] = pipeline.meta_region_at(doc[page_i], cfg, rect)
         except Exception:
             out["meta"] = None
         if out["meta"]:
@@ -185,17 +174,18 @@ def capture_region(doc, cfg, page_i, rect, sel_rect, want_meta, want_hits,
             return out
         hits = None
         try:
-            hits = vision.extract_hits(doc[page_i], cfg, rect=rect,
+            hits = pipeline.extract_hits(doc[page_i], cfg, rect=rect,
                                        include_bare=True, words=words,
                                        allow_vlm=True, on_slow=None)
         except Exception as e:
             print("bubbler: extract_hits skipped (%s)" % e, file=sys.stderr)
         if hits is None:
-            hits = scan_words(sel, include_bare=True, cfg=cfg)
+            hits = pipeline.drop_zone_labels(
+                doc[page_i], scan_words(sel, include_bare=True, cfg=cfg),
+                words)
         if not hits and ocr_fallback:
-            # text did not parse: read pixels
             try:
-                osel = vision.read_rect_words(
+                osel = pipeline.read_rect_words(
                     doc[page_i], cfg, sel_rect,
                     use_vlm=bool(cfg.get("vision_vlm")))
             except Exception as e:
@@ -255,7 +245,7 @@ class PrewarmTask(QRunnable):
 
     def run(self):
         try:
-            vision.prewarm(self.cfg)
+            runtime.prewarm(self.cfg)
         except Exception:
             pass
         try:

@@ -17,7 +17,6 @@ from .common import (SHEET, FIRST_ROW, LAST_ROW, GO_WORDS, METHODS,
                      NOGO_WORDS, ROUND_DP, TIERS, TYPES)
 from .i18n import sheet_label, sheet_value
 
-# ---------------------------------------------------------------- palette
 NAVY = "FF1F3864"
 GREEN_BAND = "FF548235"
 CREAM = "FFFFF2CC"
@@ -28,7 +27,6 @@ PASS_FILL = "FFC6EFCE"
 FAIL_FILL = "FFFFC7CE"
 GRID = "FFBFBFBF"
 
-# workbook generation stamp
 SHEET_GEN = 3
 GEN_PROP = "BubblerSheetGen"
 
@@ -38,7 +36,6 @@ LABEL_ROWS = (3, 4, 5, 6, 7)
 SUMMARY_ROW = 8
 HEAD_ROW = 10
 
-# column model
 Col = namedtuple("Col",
                  "key header width numfmt fill band flag formula hidden")
 
@@ -48,7 +45,6 @@ def _c(key, header, width, numfmt, fill, band="navy", flag=None,
     return Col(key, header, width, numfmt, fill, band, flag, formula, hidden)
 
 
-# master list in display order
 COLUMN_MODEL = (
     _c("bubble",   "bubble#",  9.0,        "@",       CREAM),
     _c("feature",  "feature",  26.0,       "General", CREAM),   # ~31 char string
@@ -73,7 +69,6 @@ COLUMN_MODEL = (
     _c("comments", "comments", 18.0,       "General", PALE_GREEN, band="green"),
 )
 
-# hidden parse-helper columns
 REQ_HELPERS = ("_nom", "_tol", "_up", "_dn", "_lo", "_hi")
 _TITLE_BLOCK_LASTCOL = 10        # reaches column J
 
@@ -87,14 +82,12 @@ def helper_columns(cfg=None):
 
 
 def full_letter_of(cfg=None):
-    """Column key -> letter for visible columns and helpers."""
     out = {col.key: letter for letter, col in active_columns(cfg)}
     out.update({key: letter for letter, key in helper_columns(cfg)})
     return out
 
 
 def active_columns(cfg=None):
-    """Columns sheet carries in order with their letters."""
     cfg = cfg or {}
     out = []
     for col in COLUMN_MODEL:
@@ -104,7 +97,6 @@ def active_columns(cfg=None):
     return tuple(out)
 
 
-# char ratios per font
 HEAD_CHARS_PER_UNIT = 1.3
 DATA_CHARS_PER_UNIT = 1.2
 
@@ -112,14 +104,12 @@ DATA_CHARS_PER_UNIT = 1.2
 NUM_FMTS = {"iso_mm": "0.00", "asme_inch": "0.0000"}
 UNIT_TEXT = {"iso_mm": "mm", "asme_inch": "in"}
 
-# title-block labels
 TITLE_LABELS = (
     ("A3", "Part #"), ("D3", "Part Name"), ("G3", "Report #"),
     ("I3", "Report #"),                  # minted not typed
     ("A4", "Drawing #"), ("D4", "Dwg Rev"), ("G4", "Part Rev"),
     ("A5", "PO #"), ("D5", "Material"), ("G5", "Serial/Lot"),
     ("A6", "Inspector"), ("D6", "Date"), ("G6", "Inspection type"), ("I6", "Stage"),
-    # row 7 audit fields
     ("A7", "Customer"), ("D7", "Units (mm/in)"),
     ("G7", "Approved by"), ("I7", "Approval Date"),
 )
@@ -128,21 +118,17 @@ TITLE_VALUE_CELLS = ("B3", "E3", "H3", "J3", "B4", "E4", "H4",
                      "B7", "E7", "H7", "J7")
 UNITS_CELL = "E7"                       # from cfg not typed
 REPORT_CELL = "J3"                      # stamped not typed
-# no header-dialog box
 APP_OWNED_VALUES = (REPORT_CELL, UNITS_CELL)
 
 
 def value_cell(label_cell):
-    """Fillable cell one column right of title-block label."""
     return chr(ord(label_cell[0]) + 1) + label_cell[1:]
 
 
 def header_fields():
-    """(value cell, English key) per fillable title-block box."""
     return tuple((value_cell(cell), key) for cell, key in TITLE_LABELS
                  if value_cell(cell) not in APP_OWNED_VALUES)
 
-# fixed always-on column letters
 BUBBLE_COL = "A"
 REQUIREMENT_COL = "C"
 MEASURED_COL = "D"
@@ -155,36 +141,50 @@ TYPE_COL = "B"
 FORMULA_COLS = (DEVIATION_COL, RESULT_COL)
 
 
-# summary row cols A..F
-SUMMARY_LABELS = (("A8", "Chars:"), ("C8", "Pass:"), ("E8", "Fail:"))
-SUMMARY_FORMATS = {}
+SUMMARY_LABELS = (("A8", "Chars:"), ("C8", "Pass:"), ("E8", "Fail:"),
+                  ("G8", "Yield:"), ("I8", "Disposition:"))
+SUMMARY_FORMATS = {"H8": "0.0%"}
+YIELD_FORMULA = '=IF(D8+F8>0,D8/(D8+F8),"")'
 
 
-def summary_formulas(letter_of):
+def disposition_formula(lang="en"):
+    """J8 verdict, reportrow.summary rule in Excel."""
+    from .reportrow import ACCEPTED, REJECTED, IN_PROGRESS
+    w = [sheet_value(e, lang) for e in (REJECTED, ACCEPTED, IN_PROGRESS)]
+    return '=IF(F8>0,"%s",IF(AND(B8>0,D8=B8),"%s","%s"))' % tuple(w)
+
+
+def summary_formulas(letter_of, lang="en"):
     """Row-8 counters over inspectable rows only."""
     a, b = FIRST_ROW, LAST_ROW
     A = letter_of["bubble"]
     C = letter_of["requirement"]
     F = letter_of["result"]
     LO, HI = letter_of["_lo"], letter_of["_hi"]
-    chars = ('=SUMPRODUCT((%s%d:%s%d<>"")*('
-             '((%s%d:%s%d<>"")+(%s%d:%s%d<>"")+(%s%d:%s%d="GO/NOGO"))>0))'
-             % (A, a, A, b, LO, a, LO, b, HI, a, HI, b, C, a, C, b))
     fres = "%s%d:%s%d" % (F, a, F, b)
+    chars = ('=SUMPRODUCT((%s%d:%s%d<>"")*('
+             '((%s%d:%s%d<>"")+(%s%d:%s%d<>"")+(%s%d:%s%d="GO/NOGO")'
+             '+(%s<>""))>0))'
+             % (A, a, A, b, LO, a, LO, b, HI, a, HI, b, C, a, C, b, fres))
     return (("B8", chars),
             ("D8", '=COUNTIF(%s,"PASS")' % fres),
-            ("F8", '=COUNTIF(%s,"FAIL")' % fres))
+            ("F8", '=COUNTIF(%s,"FAIL")' % fres),
+            ("H8", YIELD_FORMULA),
+            ("J8", disposition_formula(lang)))
+
+def chars_formulas_before(chars):
+    """Old B8 spellings a patch may replace."""
+    i = chars.rindex('+(')
+    return (chars[:i] + chars[chars.index(')>0))', i):],)
 
 DESIGNATORS = ("MAJOR", "MINOR", "KEY", "CRITICAL")
 
 
-# optional tier -> classification
 TIER_DESIGNATOR = {"red": "CRITICAL", "blue": "MAJOR", "green": "MINOR"}
 OWNED_DESIGNATORS = frozenset(TIER_DESIGNATOR.values())
 
 ROW_H_TITLE = 16.5
 ROW_H = 15.0
-# bilingual label two lines
 ROW_H_STACKED = 27.0
 
 
@@ -195,7 +195,6 @@ HEAD_STACKED = Alignment(horizontal="center", vertical="center",
 
 
 def row_height(lang, base=None):
-    """Row height for label row in lang."""
     return ROW_H_STACKED if lang == "both" else (base or ROW_H)
 
 
@@ -210,12 +209,10 @@ def _le(limit):
 
 
 def _words(words):
-    """OR() over one attribute vocabulary from common."""
     return "OR(%s)" % ",".join('UPPER(H{r})="%s"' % w for w in words)
 
 
 def _words_tail():
-    """GO/NOGO word fallback shared by every result-formula variant."""
     return ('IF(' + _words(GO_WORDS) + ',"PASS",'
             'IF(' + _words(NOGO_WORDS) + ',"FAIL",""))')
 
@@ -245,11 +242,8 @@ def result_formula(r, limit=None):
     ).format(r=r)
 
 
-# --------------------------------------------------------------------------
-# parse requirement string
-
 _SEP = 'MID(1/2,2,1)'          # local decimal separator
-_PM = u'±'                # plus/minus sign
+_PM = u'±'
 
 
 def _startpos(req):
@@ -271,7 +265,6 @@ def _numval(texpr):
 
 
 def _signed(tok):
-    """Signed offset token cell as number."""
     return ('(IF(LEFT(%s,1)="+",1,-1))*%s'
             % (tok, _numval('TRIM(MID(%s,2,99))' % tok)))
 
@@ -313,8 +306,20 @@ def req_lo_formula(nom, tol, dn):
 
 
 def req_hi_formula(nom, tol, up):
-    """Upper acceptance limit. "" when upper side open (MIN)."""
+    """Upper limit, blank when open (MIN)."""
+    two = 'IFERROR(FIND("/",%s),0)>0' % tol
+    pm = ('IF(OR(LEFT(%s,1)="+",AND(%s,LEFT(%s,1)="-")),%s+%s,%s)'
+          % (up, two, up, nom, _signed(up), nom))
+    return _hi_wrap(nom, tol, pm)
+
+
+def req_hi_formula_v1(nom, tol, up):
+    """Old upper-limit formula, recognised for upgrade."""
     pm = 'IF(LEFT(%s,1)="+",%s+%s,%s)' % (up, nom, _signed(up), nom)
+    return _hi_wrap(nom, tol, pm)
+
+
+def _hi_wrap(nom, tol, pm):
     mag = _numval('TRIM(MID(%s,2,99))' % tol)
     return ('=IF(%s="","",IF(%s="","",IF(UPPER(%s)="MIN","",'
             'IF(UPPER(%s)="MAX",%s,IF(LEFT(%s,1)="%s",%s+%s,%s)))))'
@@ -328,8 +333,8 @@ def req_deviation_formula(meas, nom):
 
 def req_result_formula(bubble, meas, lo, hi):
     """PASS/FAIL from parsed limits. Open side not checked."""
-    ge = 'ROUND(%s-%s,%d)>=0' % (meas, lo, ROUND_DP)      # measured >= lo
-    le = 'ROUND(%s-%s,%d)>=0' % (hi, meas, ROUND_DP)      # measured <= hi
+    ge = 'ROUND(%s-%s,%d)>=0' % (meas, lo, ROUND_DP)
+    le = 'ROUND(%s-%s,%d)>=0' % (hi, meas, ROUND_DP)
     lo_ok = 'IF(%s="",TRUE,%s)' % (lo, ge)
     hi_ok = 'IF(%s="",TRUE,%s)' % (hi, le)
     words = ('IF(OR(%s),"PASS",IF(OR(%s),"FAIL",""))'
@@ -341,39 +346,32 @@ def req_result_formula(bubble, meas, lo, hi):
 
 
 def fits_header(width, longest):
-    """Does width hold header of longest characters?"""
     return width * HEAD_CHARS_PER_UNIT >= longest
 
 
 def fits_value(width, longest):
-    """Does width hold data value of longest characters?"""
     return width * DATA_CHARS_PER_UNIT >= longest
 
 
 def number_formats(units, cfg=None):
-    """Active-column letter -> number format for one unit system."""
     fmt = NUM_FMTS.get(units or "iso_mm", NUM_FMTS["iso_mm"])
     return {letter: (fmt if col.numfmt == "num" else col.numfmt)
             for letter, col in active_columns(cfg)}
 
 
 def _list_formula(values):
-    """Quoted inline Excel list literal."""
     return '"%s"' % ",".join(values)
 
 
 def type_choices(sheet_lang):
-    """Column B dropdown from common.TYPES. Cannot drift."""
     return [sheet_value(t, sheet_lang) for t in TYPES]
 
 
 def tier_choices(sheet_lang):
-    """Column M dropdown from common.TIERS."""
     return [sheet_value(t, sheet_lang) for t in TIERS if t]
 
 
 def stamp_generation(wb, gen=SHEET_GEN):
-    """Write generation stamp replacing older one."""
     props = wb.custom_doc_props
     try:
         old = props[GEN_PROP]
@@ -399,7 +397,6 @@ def _thin():
 
 def build_workbook(sheet_lang="both", company="", units="iso_mm",
                    inspections=(), cfg=None):
-    """Whole inspection workbook from one i18n catalog."""
     lang = sheet_lang or "both"
     cols = active_columns(cfg)
     wb = Workbook()
@@ -435,14 +432,12 @@ def banner_text(company, lang):
 
 
 def label_cells(cfg=None):
-    """Every static label cell -> English key in one table."""
     return (tuple(TITLE_LABELS) + tuple(SUMMARY_LABELS)
             + tuple(("%s%d" % (letter, HEAD_ROW), col.header)
                     for letter, col in active_columns(cfg)))
 
 
 def _title(ws, lang, company, mid, cols):
-    """Row 1 banner merged across table"""
     ws[BANNER_CELL] = banner_text(company, lang)
     ws[BANNER_CELL].font = Font(name="Arial", size=14, bold=True, color=NAVY)
     ws[BANNER_CELL].alignment = Alignment(horizontal="left",
@@ -452,7 +447,6 @@ def _title(ws, lang, company, mid, cols):
 
 
 def _titleblock(ws, lang, units, label_font, grid):
-    """Rows 3-7 labels plus fillable value cells"""
     for cell, key in TITLE_LABELS:
         ws[cell] = sheet_label(key, lang)
         ws[cell].font = label_font
@@ -466,8 +460,7 @@ def _titleblock(ws, lang, units, label_font, grid):
 
 
 def _summary(ws, lang, label_font, letter_of):
-    """Row 8 counters from active layout"""
-    formulas = summary_formulas(letter_of)
+    formulas = summary_formulas(letter_of, lang)
     for cell, key in SUMMARY_LABELS:
         ws[cell] = sheet_label(key, lang)
         ws[cell].alignment = STACKED
@@ -481,16 +474,14 @@ def _summary(ws, lang, label_font, letter_of):
 
 
 def _last_visible(cols):
-    """Last non-hidden column letter where sheet visibly ends."""
     vis = [letter for letter, col in cols if not col.hidden]
     return vis[-1] if vis else cols[-1][0]
 
 
 def _headrow(ws, lang, head_font, mid, grid, cols):
-    """Row 10 column headers navy then green"""
     for letter, col in cols:
         if col.hidden:
-            continue                     # helper no header
+            continue
         c = ws["%s%d" % (letter, HEAD_ROW)]
         c.value = sheet_label(col.header, lang)
         c.font = head_font
@@ -502,7 +493,6 @@ def _headrow(ws, lang, head_font, mid, grid, cols):
 
 
 def write_row_formulas(ws, r, letter_of):
-    """GEN-3 built formulas for one data row reading Requirement string."""
     def cell(key):
         return "%s%d" % (letter_of[key], r)
     req, meas = cell("requirement"), cell("measured")
@@ -520,7 +510,6 @@ def write_row_formulas(ws, r, letter_of):
 
 
 def _datarows(ws, data_font, mid, grid, fmts, cols, helpers, letter_of):
-    """Rows 11-310 styles per-row formulas and hidden helpers."""
     fills = {letter: PatternFill("solid", fgColor=col.fill)
              for letter, col in cols}
     for r in range(FIRST_ROW, LAST_ROW + 1):
@@ -533,13 +522,12 @@ def _datarows(ws, data_font, mid, grid, fmts, cols, helpers, letter_of):
             c.number_format = fmts[letter]
         write_row_formulas(ws, r, letter_of)
         ws.row_dimensions[r].height = ROW_H
-    for letter, _key in helpers:            # keep parse columns hidden
+    for letter, _key in helpers:
         ws.column_dimensions[letter].hidden = True
         ws.column_dimensions[letter].width = 8.0
 
 
 def _layout(ws, cols):
-    """Widths freeze autofilter and hidden helpers"""
     for letter, col in cols:
         ws.column_dimensions[letter].width = col.width
         if col.hidden:
@@ -558,7 +546,6 @@ def _hf_text(s):
 
 def apply_print_setup(ws, part="", last_row=FIRST_ROW, report_id="",
                       cols=None):
-    """A4 landscape. One page wide. Heading row every page."""
     last_col = _last_visible(cols or active_columns())
     end = max(int(last_row or FIRST_ROW), FIRST_ROW)
     ws.print_area = "A1:%s%d" % (last_col, end)
@@ -592,22 +579,19 @@ def _dv(values, ref):
 
 
 def _span(letter):
-    """Data-row range for one column."""
     return "%s%d:%s%d" % (letter, FIRST_ROW, letter, LAST_ROW)
 
 
-# only header dropdown
 INSPECTION_CELL = "H6"
 
 
 def header_dropdown_spec(names):
-    """(cell, values) for Inspection type list or None when empty."""
-    names = [str(n).strip() for n in (names or ())
-             if str(n).strip() and "," not in str(n) and '"' not in str(n)]
+    names = fit_list([str(n).strip() for n in (names or ())
+                      if str(n).strip() and "," not in str(n)
+                      and '"' not in str(n)])
     return (INSPECTION_CELL, tuple(names)) if names else None
 
 
-# columns carrying dropdowns
 _DROPDOWN_VALUES = {
     "type": lambda lang: type_choices(lang),
     "tier": lambda lang: tier_choices(lang),
@@ -616,8 +600,30 @@ _DROPDOWN_VALUES = {
 }
 
 
+def gage_names(cfg=None):
+    """Gage list minus comma or quote names."""
+    out = []
+    for t in (cfg or {}).get("metrology_tools") or ():
+        n = str((t or {}).get("name") or "").strip()
+        if n and "," not in n and '"' not in n and n not in out:
+            out.append(n)
+    return fit_list(out)
+
+
+# Excel inline list max
+LIST_MAX = 255
+
+
+def fit_list(names):
+    out = []
+    for n in names:
+        if len('"%s"' % ",".join(out + [n])) > LIST_MAX:
+            break
+        out.append(n)
+    return out
+
+
 def dropdown_specs(lang, cfg=None):
-    """(column, range, values) per dropdown active sheet carries."""
     out = []
     for letter, col in active_columns(cfg):
         make = _DROPDOWN_VALUES.get(col.key)
@@ -641,12 +647,10 @@ RESULT_RULES = (("PASS", PASS_FILL), ("FAIL", FAIL_FILL))
 
 
 def result_range():
-    """Result-column span PASS/FAIL fills cover"""
     return _span(RESULT_COL)
 
 
 def _rules(ws):
-    """PASS green / FAIL red on result column"""
     ref = _span(RESULT_COL)
     for word, colour in (("PASS", PASS_FILL), ("FAIL", FAIL_FILL)):
         ws.conditional_formatting.add(ref, CellIsRule(
@@ -656,5 +660,4 @@ def _rules(ws):
 
 
 def column_letters(cfg=None):
-    """Active columns' letters in order for tests and callers."""
     return [letter for letter, _col in active_columns(cfg)]

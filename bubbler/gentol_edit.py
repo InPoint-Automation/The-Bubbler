@@ -15,13 +15,11 @@ from .config import (CFG_DEFAULT, dp_label, ladder_key, units_of,
                      validate_ladder)
 from .i18n import tr
 from .iso2768 import ISO2768, ISO2768_ANGLE
-from .scanlib import (GENTOL_SRC_USER, gentol_readout, parse_gentol_bands)
+from .gentol import GENTOL_SRC_USER, gentol_readout, parse_gentol_bands
 
-# coarsest last named full
 ISO_CLASSES = (("f", "fine"), ("m", "medium"), ("c", "coarse"),
                ("v", "very coarse"))
 
-# ribbon source words reused
 SRC_WORDS = {
     "band table on the drawing": "band table",
     "decimal-place block": "printed .X block",
@@ -35,7 +33,6 @@ SRC_WORDS = {
 
 
 def _num(e):
-    """Line edit number or None when blank or bad."""
     try:
         return fnum(e.text())
     except (ValueError, AttributeError):
@@ -43,7 +40,6 @@ def _num(e):
 
 
 def block_summary(gtols):
-    """Reader findings in drawing's own terms."""
     g = gtols or {}
     out = []
     for key, label in (("bands", "linear bands"),
@@ -68,11 +64,11 @@ def block_summary(gtols):
 
 
 class GentolDialog(QDialog):
-    """Let person correct read block."""
 
     def __init__(self, parent, gtols=None, cfg=None, session=None,
                  page_i=0):
         super().__init__(parent)
+        self._icls = (getattr(parent, "last", None) or {}).get("icls")
         self.setWindowTitle(tr('General tolerances'))
         self.cfg = dict(cfg or {})
         self.session = dict(session or {})
@@ -93,7 +89,6 @@ class GentolDialog(QDialog):
                                      | QDialogButtonBox.Cancel)
         self.btns.accepted.connect(self._ok)
         self.btns.rejected.connect(self.reject)
-        # one-click revert to auto
         self.b_reset = self.btns.addButton(tr('Reset to auto'),
                                            QDialogButtonBox.ResetRole)
         self.b_reset.setToolTip(tr('Drop hand correction, use the drawing '
@@ -108,16 +103,15 @@ class GentolDialog(QDialog):
         self._sync()
 
     def _reset_auto(self):
-        """Drop correction and fall back to drawing."""
         self.rb_drawing.setChecked(True)
         self._block = None
         self.accept()
 
-    # ------------------------------------------------------- what was read
     def _read_group(self, page_i):
         g = QGroupBox(tr('Read off the drawing'))
         lay = QVBoxLayout(g)
-        src, val, inh = gentol_readout(self.gtols, self.cfg, self.session)
+        src, val, inh = gentol_readout(self.gtols, self.cfg, self.session,
+                                       icls=self._icls)
         head = QLabel("%s %d:  %s  %s" % (tr('page'), page_i + 1,
                                           tr(SRC_WORDS.get(src, src)), val))
         head.setStyleSheet("font-weight:600;")
@@ -133,7 +127,6 @@ class GentolDialog(QDialog):
         lay.addWidget(body)
         return g
 
-    # ------------------------------------------------------- correction
     def _editor_group(self):
         g = QGroupBox(tr('Correction'))
         lay = QVBoxLayout(g)
@@ -172,7 +165,6 @@ class GentolDialog(QDialog):
         return g
 
     def _ladder_widget(self):
-        """Ladder this unit system uses."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -202,7 +194,6 @@ class GentolDialog(QDialog):
         row.addWidget(self.cb_class)
         row.addStretch(1)
         lay.addLayout(row)
-        # numbers class means
         self.tbl = QTableWidget(0, 3)
         self.tbl.setHorizontalHeaderLabels(
             [tr('nominal, mm'), tr('linear'), tr('angular, deg')])
@@ -215,7 +206,6 @@ class GentolDialog(QDialog):
         return w
 
     def _fill_iso(self):
-        """Show what chosen class means band by band."""
         if self.tbl is None:
             return
         cls = self.cb_class.currentData() or "m"
@@ -236,9 +226,7 @@ class GentolDialog(QDialog):
                 self.tbl.setItem(r, c, QTableWidgetItem(text))
             lo = hi
 
-    # ------------------------------------------------------------ state
     def _load(self):
-        """Open on what is in force."""
         ov = self.session.get("gentol_user")
         ov = dict(ov) if isinstance(ov, dict) and ov else None
         self.rb_fix.setChecked(ov is not None)
@@ -275,7 +263,6 @@ class GentolDialog(QDialog):
     def _sync(self):
         self.editor.setEnabled(self.rb_fix.isChecked())
 
-    # ----------------------------------------------------------- answer
     def result_block(self):
         """Corrected block or None for use-the-drawing."""
         if not self.rb_fix.isChecked():
@@ -333,7 +320,6 @@ class GentolDialog(QDialog):
 
 
 class ReapplyDialog(QDialog):
-    """Which bubbled rows take corrected number."""
 
     def __init__(self, parent, ledger, plan):
         super().__init__(parent)
@@ -379,6 +365,5 @@ class ReapplyDialog(QDialog):
         v.addWidget(btns)
 
     def chosen(self):
-        """[(index, new)] for ticked rows only."""
         return [(i, new) for (i, _old, new), cb
                 in zip(self.plan, self.boxes) if cb.isChecked()]

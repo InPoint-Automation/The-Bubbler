@@ -13,10 +13,8 @@ from .units import other_units
 
 CFG_PATH = os.path.join(os.path.expanduser("~"), ".bubbler.json")
 
-# Shipped machining sequence in order
 OPS_DEFAULT = ["op1", "op2", "op3", "final"]
 
-# FAI report identity + toggles (M1/M5)
 FAI_SHOW_FIELDS = ("part_name", "drawing", "dwg_rev", "part_rev", "po",
                    "material", "serial", "units", "customer")
 FAI_SHOW_COLUMNS = ("feature", "method", "comments", "dev_bar")
@@ -26,11 +24,11 @@ FAI_PAPERS = ("a4", "letter")
 FAI_LANGS = ("en", "pl", "en-pl")
 
 # bump when shipped DEFAULT changes
-CFG_VERSION = 2
+CFG_VERSION = 4
 
-# version -> keys whose default changed in it
 CFG_RESETS = {
     2: ("dp_tols_inch", "type_tier_map", "tier_shape_map", "type_tier_auto"),
+    3: ("vision_sym_conf", "vision_region_conf"),
 }
 
 CFG_DEFAULT = {
@@ -40,40 +38,32 @@ CFG_DEFAULT = {
     "default_type": "dim",
     "default_tier": "",
     "default_iso_class": "m",
-    "rib_iso_on": False,
-    "gages": {},
+    "rib_iso_on": True,
     "last_dir": "",
     "dlg_pos": None,
     "panel_cols": ["bubble", "feature", "nominal", "tol"],
-    "panel_col_w": {},       # per-column px widths
-    # STEP 3D preview opt-in
+    "panel_col_w": {},  # px widths
     "use_step_preview": False,
-    "step_previews": {},     # per-pdf STEP choice
+    "step_previews": {},
     "icon_color": "#1F3864",
-    # balloon on callout
     "leaders": False,
     "company": "",
-    # FAI report identity
-    "fai_logo": "",              # blank = name only
+    "fai_logo": "",  # blank = name only
     "fai_form_id": "",
     "fai_form_rev": "",
-    "fai_paper": "a4",           # a4 | letter
-    "fai_lang": "en-pl",         # en | pl | en-pl
-    # on = ballooned PDF + report
-    "fai_report_on": True,
-    # amber band %. 0 disables
-    "fai_amber_pct": 90,
-    # header defaults (L5)
-    "fai_customer": "",
+    "fai_paper": "a4",  # a4 | letter
+    "fai_lang": "en-pl",  # en | pl | en-pl
+    "save_output": "both",  # both | print | report
+    "report_first": False,
+    "run_stats": ["mean"],
+    "fai_img_width_pct": 100,
+    "fai_img_per_page": "auto",
+    "fai_amber_pct": 90,  # %. 0 disables
     "fai_inspector": "",
-    # all on except qa_signature
     "fai_show": {k: (k != "qa_signature") for k in FAI_SHOW},
-    "ui_scale": 0,
+    "ui_scale": 0,  # 0 = system scale
     "recent": [],
-    # metrology tool catalog: specific tools with their OWN range, so a big
-    # dimension excludes a small-envelope CMM or a caliper you do not own.
-    # resolution/accuracy/range in mm; features = what the tool can measure.
-    "metrology_tools": [
+    "metrology_tools": [  # mm
         {"id": "caliper", "name": "caliper", "kind": "caliper",
          "resolution": 0.01, "accuracy": 0.03,
          "range_min": 0.0, "range_max": 150.0,
@@ -88,140 +78,118 @@ CFG_DEFAULT = {
          "features": ["length", "od", "id", "depth", "radius", "angle",
                       "thread", "surface", "gdt"]},
     ],
-    # prefer a tool whose resolution is this many times finer than the
-    # tolerance; 0 = do not rank by capability, just fit by feature + range.
-    "gage_resolution_ratio": 10,
+    "gage_resolution_ratio": 10,  # 0 = no rank
     "ops_list": list(OPS_DEFAULT),
     "measure_skip_filled": True,
-    "measure_units": "drawing",    # drawing | other
-    "cmm_import_op": "",           # "" = ask each time
+    "measure_units": "drawing",  # drawing | other
     "hole_pin_auto": False,
     "units": "iso_mm",
-    "mode": "advanced",
-    "qc_subdir": "qc",       # "" = beside PDF
+    "qc_subdir": "qc",  # "" = beside PDF
     "titleblock_autofill": True,
-    # days idle before asked. 0 off
-    "run_stale_days": 7,
-    "dp_on": False,
-    # gentol ladder. auto follows units
-    "gentol_ladder": "auto",
-    # ask when detector unsure
+    "run_stale_days": 7,  # days. 0 off
+    "dp_on": True,
     "units_ask": True,
-    # basic/ref also take general tol?
     "gentol_basic_ref": True,
-    # on assumes shortest-side band
     "angular_short_side": True,
-    # ".X" loosest rung. no "0"
-    "dp_tols": {"1": 0.2, "2": 0.05, "3": 0.01},
-    # inch decimal-place ladder
+    "dp_tols": {"1": 0.2, "2": 0.05, "3": 0.01},  # retired, inch-only now
     "dp_tols_inch": {"1": 0.1, "2": 0.01, "3": 0.005, "4": 0.0005},
     "snap_geom": True,
     "tier_shapes": True,
-    # one shape per tier
     "tier_shape_map": {"red": "circle", "blue": "star",
                        "green": "diamond"},
     "type_tier_auto": True,
-    # red=feature blue=geom/surface green=thread
-    "type_tier_map": {"dim": "red", "hole": "red", "thread": "green",
+    "type_tier_map": {"dim": "red", "hole": "red", "thread": "green",  # tier per type
                       "thru": "red", "slot": "red", "depth": "red",
                       "position": "blue", "GD&T": "blue", "finish": "blue"},
     "offset_dir": "auto",
     "hotbar_on": True,
-    "win_geometry": "",      # base64 window geometry
-    "panel_w": 0,            # 0 = Qt default
-    "open_dlg_size": [980, 720],   # picker size
-    "calc_history": [],      # [expr, result] newest first
+    "win_geometry": "",  # base64
+    "panel_w": 0,  # 0 = Qt default
+    "nav_w": 0,  # 0 = Qt default
+    "open_dlg_size": [980, 720],
+    "calc_history": [],
 
-    "obstacle_min_w": 0.5,   # pt
+    "obstacle_min_w": 0.5,  # pt
     "language": "en",
     "sheet_lang": "both",
-    # tier -> R designator
     "sheet_tier_designator": False,
-    # tier is render state
     "sheet_tier_column": False,
-    # optional xlsx columns. default off
-    "sheet_refzone_column": False,   # GD&T datum/zone ref
-    "sheet_ncr_column": False,       # NCR number
-    "sheet_gage_column": False,      # gage name
-    "sheet_method_column": False,    # method dropdown (GEN 3)
-    "sheet_type_column": False,      # type dropdown (GEN 3)
-    # spell BASIC/REF beside brackets (W70)
+    "sheet_refzone_column": False,
+    "sheet_ncr_column": False,
+    "sheet_gage_column": False,
+    "sheet_method_column": False,
+    "sheet_type_column": False,
     "sheet_basic_ref_label": False,
-    # scan-review default tick. drawing (H6) overrides
-    "scan_preset": "First article",
+    "scan_preset": "First article",  # drawing H6 overrides
     "scan_presets": {},
     "capture_radius": 12.0,  # pt
-    # click a callout -> snap to its detected region and bubble it. off ->
-    # open the bubble dialog prefilled (preview/edit) instead of dropping it
     "click_auto_bubble": True,
+    "auto_toast": True,
+    "placement_box_obstacles": True,
+    "toast_secs": 2.5,  # s
+    "toast_stack": 6,
+    "hole_facet_skip": ["tap_drill", "tap_drill_depth", "qty"],
+    "hole_facet_order": ["hole", "depth", "tap_drill", "tap_drill_depth",
+                         "cbore", "cbore_depth", "csink", "csink_depth",
+                         "qty"],
+    "qty_combine": "worst",  # worst | average
     "vision_assist": True,
     "vision_ocr": True,
     "vision_ocr_always": False,
     "vision_ocr_conf": 0.5,
     "vision_ocr_engine": "rapidocr",
+    "vision_lexicon": True,
     "vision_symbols": True,
-    "vision_sym_conf": 0.35,
-    "vision_nms_iou": 0.45,
-    "vision_dpi": 200,
-    # fallback. ONNX export size wins
-    "vision_imgsz": 2048,
+    "vision_sym_conf": 0.8,
+    "vision_nms_iou": 0.45,  # YOLOv5 default
+    "vision_dpi": 200,  # dpi
+    "vision_imgsz": 2048,  # fallback, ONNX size wins
     "vision_tile": True,
     "vision_tile_overlap": 0.2,  # must exceed largest symbol
     "vision_merge": "wbf",
-    "vision_fcf_rerun": True,    # unrotated only
-    "vision_fcf_dpi": 600,
+    "vision_fcf_rerun": True,
+    "vision_fcf_dpi": 600,  # dpi
     "vision_fcf_conf": 0.25,
     "vision_fcf_structural": True,
-    # read characteristic off frame image
-    "vision_fcf_classify": True,
-    # wrong symbol worse than blank
-    "vision_fcf_cls_conf": 0.75,
-    "vision_fcf_model": "",      # blank = bundled
-    "vision_fcf_divider_min": 0.6,
-    "vision_fcf_proj_gap": 2,       # px
+    "vision_fcf_divider_min": 0.6,  # fraction of frame
+    "vision_fcf_proj_gap": 2,  # px
     "collect_corrections": False,
-    "corrections_dir": "",          # blank -> ~/.bubbler/corrections
-    # F9: save bubbles as training acceptances
+    "corrections_dir": "",  # blank = ~/.bubbler/corrections
     "collect_acceptances": False,
-    "acceptances_dir": "",          # blank -> ~/.bubbler/acceptances
+    "acceptances_dir": "",  # blank = ~/.bubbler/acceptances
     "corrections_github_url":
         "https://github.com/InPoint-Automation/The-Bubbler/issues/new",
-    "corrections_email": "",        # blank hides Email button
-    "vision_model": "",      # blank = bundled
+    "corrections_email": "",  # blank hides Email
+    "vision_model": "",  # blank = bundled
     "vision_ep": "auto",
-    # GPU offer "do not show again"
     "gpu_hint_off": False,
     "vision_region": True,
-    "vision_region_conf": 0.35,
-    # union region read with plain text scan
+    "vision_region_conf": 0.8,
     "vision_region_union": True,
-    # union leg proposes bare numbers
     "vision_union_bare": True,
-    "vision_region_model": "",    # blank = bundled
-    # tile-trained region model only (C2 arm B)
+    "vision_region_model": "",  # blank = bundled
     "vision_region_tile": False,
-    # refit a diagonal callout box to its text angle (AP-ROT)
     "vision_orient_refit": True,
-    "vision_gpu": True,             # Linux GPU pack
-    "capture_drag_ocr": True,       # drag-box capture
-    "leader_trim": True,            # stop leader at text
-    "vision_section_group": True,   # grow stacked boxes
-    "vision_section_vgap": 1.6,     # line-heights vertical
-    "vision_section_hpad": 0.5,     # line-heights horizontal
-    "vision_debug_overlay": False,  # Debug overlay button
-    "vision_debug_on": False,       # overlay drawn
+    "vision_gpu": True,
+    "capture_drag_ocr": True,
+    "leader_trim": True,
+    "vision_section_group": True,
+    "vision_section_vgap": 1.6,  # line-heights
+    "vision_section_hpad": 0.5,  # line-heights
+    "vision_debug_overlay": False,
+    "vision_debug_on": False,
     "vision_debug_layers": ["sections", "regions", "symbols"],
     "vision_vlm": False,
     "vision_vlm_always": False,
-    # VLM second opinion. disagreement unticks
     "vision_vlm_crosscheck": False,
     "vision_vlm_engine": "florence",
-    "vision_vlm_model": "",       # blank = bundled
+    "vision_vlm_model": "",  # blank = bundled
     "vision_sym_inject_vlm": True,
-    "vision_sym_inject_text": True,   # inject glyphs into text-layer
+    "vision_sym_inject_text": True,
     "vision_paddlevl_model": "",  # blank = paddle cache
 }
 
+SAVE_OUTPUTS = ("both", "print", "report")
 
 def load_cfg():
     cfg = copy.deepcopy(CFG_DEFAULT)
@@ -237,30 +205,68 @@ def load_cfg():
             cfg[k].update(v)
         else:
             cfg[k] = v
+    # never read, units decide
+    cfg.pop("gentol_ladder", None)
+    # per drawing / header now
+    cfg.pop("fai_customer", None)
+    cfg.pop("cmm_import_op", None)
+    # measure units per drawing now
+    cfg["measure_units"] = CFG_DEFAULT["measure_units"]
+    old = cfg.pop("fai_report_on", None)
+    if "save_output" not in data and old is False:
+        cfg["save_output"] = "print"
+    if cfg.get("save_output") not in SAVE_OUTPUTS:
+        cfg["save_output"] = CFG_DEFAULT["save_output"]
     return _apply_resets(cfg, data.get("cfg_version"))
 
-
 def _apply_resets(cfg, stored_ver):
-    """Re-default only keys newer CFG_VERSION changed."""
     try:
         ver = int(stored_ver)
     except (TypeError, ValueError):
-        ver = 0                      # unstamped = oldest
+        ver = 0  # unstamped = oldest
     if ver < CFG_VERSION:
         for v in sorted(CFG_RESETS):
             if v > ver:
                 for k in CFG_RESETS[v]:
                     cfg[k] = copy.deepcopy(CFG_DEFAULT[k])
+    if ver < 4:
+        # count row joined facets, skipped
+        skip = list(cfg.get("hole_facet_skip") or [])
+        order = list(cfg.get("hole_facet_order") or [])
+        if "qty" not in skip:
+            cfg["hole_facet_skip"] = skip + ["qty"]
+        if order and "qty" not in order:
+            cfg["hole_facet_order"] = order + ["qty"]
     cfg["cfg_version"] = CFG_VERSION
     return cfg
-
 
 UNIT_SYSTEMS = ("iso_mm", "asme_inch")
 MEASURE_UNITS = ("drawing", "other")
 
+# cfg key -> drawing key
+DRAWING_OVERRIDES = {"units": "units", "measure_units": "measure_units",
+                     "dp_tols_inch": "dp_tols_inch", "ops_list": "op_seq",
+                     "default_iso_class": "icls_hand",
+                     "dp_on": "gentol_auto", "rib_iso_on": "gentol_auto",
+                     "leaders": "leaders"}
+
+
+def gentol_auto(cfg, session=None):
+    """Ribbon ISO / Y14.5 switch. Drawing's pick first."""
+    v = (session or {}).get("gentol_auto")
+    if v is not None:
+        return bool(v)
+    cfg = cfg or {}
+    return bool(cfg.get("dp_on") or cfg.get("rib_iso_on"))
+
+
+def leaders_on(cfg, session=None):
+    for src in (session, cfg):
+        if src and src.get("leaders") is not None:
+            return bool(src.get("leaders"))
+    return False
 
 def measure_units(cfg, session=None):
-    """Unit system measure bar reads and writes in."""
     mode = None
     for src in (session, cfg):
         if not src:
@@ -272,9 +278,7 @@ def measure_units(cfg, session=None):
     drw = units_of(cfg, session)
     return other_units(drw) if mode == "other" else drw
 
-
 def units_of(cfg, session=None):
-    """Unit system for drawing. Per-drawing answer wins."""
     for src in (session, cfg):
         if not src:
             continue
@@ -283,25 +287,16 @@ def units_of(cfg, session=None):
             return u
     return "iso_mm"
 
-
 def units_source(session=None):
     """What set drawing's unit system. manual / detected / ""."""
     src = (session or {}).get("units_src")
     return src if src in ("manual", "detected") else ""
 
-
 def gentol_ladder(cfg, session=None):
-    """The general-tolerance ladder, decided by the drawing STANDARD.
-
-    ISO 2768 on a millimetre drawing, the decimal-place ladder on an inch one;
-    the ladder is not a separate setting -- the units decide it.
-    """
     return ("decimal" if units_of(cfg, session) == "asme_inch"
             else "iso2768")
 
-
 def ops_seq(cfg, session=None):
-    """Machining sequence for drawing in order. Per-drawing wins."""
     for src in (session, cfg):
         if not src:
             continue
@@ -312,9 +307,7 @@ def ops_seq(cfg, session=None):
                 return clean
     return list(OPS_DEFAULT)
 
-
 def register_op(name, cfg, session=None):
-    """Give op place in sequence first time it is used."""
     name = str(name or "").strip()
     if not name:
         return ops_seq(cfg, session)
@@ -329,10 +322,7 @@ def register_op(name, cfg, session=None):
         session["op_seq"] = seq
     return seq
 
-
-# sane band per rung per unit system
 LADDER_RANGE = {"iso_mm": (0.0005, 5.0), "asme_inch": (0.00005, 0.5)}
-
 
 def dp_label(key):
     """"2" -> ".XX". Bucket name user reads."""
@@ -342,9 +332,7 @@ def dp_label(key):
         return str(key)
     return "." + "X" * max(1, n)
 
-
 def validate_ladder(tols, units="iso_mm"):
-    """Sanity-check decimal-place ladder -> (clean, reason)."""
     lo, hi = LADDER_RANGE.get(units, LADDER_RANGE["iso_mm"])
     clean = {}
     for k in (tols or {}):
@@ -368,14 +356,36 @@ def validate_ladder(tols, units="iso_mm"):
             return None, ("monotonic", dp_label(b), dp_label(a))
     return clean, None
 
-
 def ladder_key(units="iso_mm"):
-    """Config key holding ladder for unit system."""
     return "dp_tols_inch" if units == "asme_inch" else "dp_tols"
 
+CFG_KEEP_ON_RESET = frozenset((
+    "cfg_version", "last_dir", "dlg_pos", "recent", "win_geometry",
+    "panel_w", "nav_w", "open_dlg_size", "calc_history", "panel_cols",
+    "panel_col_w",
+    "step_previews",
+))
+
+CFG_CATALOG_KEYS = frozenset((
+    "metrology_tools", "scan_presets", "ops_list",
+    "type_tier_map", "tier_shape_map", "company", "dp_tols", "dp_tols_inch",
+    "fai_logo", "fai_form_id", "fai_form_rev",
+    "fai_inspector", "corrections_email",
+))
+
+def reset_cfg(cfg, keep_catalogs=False):
+    """In place. Live dict shared across mixins."""
+    keep = set(CFG_KEEP_ON_RESET)
+    if keep_catalogs:
+        keep |= CFG_CATALOG_KEYS
+    kept = {k: cfg[k] for k in keep if k in cfg}
+    cfg.clear()
+    cfg.update(copy.deepcopy(CFG_DEFAULT))
+    cfg.update(kept)
+    return cfg
 
 def save_cfg(cfg):
-    cfg["cfg_version"] = CFG_VERSION      # stamp what we wrote
+    cfg["cfg_version"] = CFG_VERSION
     try:
         with open(CFG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=1)

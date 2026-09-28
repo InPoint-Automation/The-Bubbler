@@ -10,7 +10,6 @@ _CATALOGS = {"pl": _PL}
 
 
 def set_lang(lang):
-    """Set active language or fall back to en."""
     global _LANG
     code = str(lang).lower()[:2]
     _LANG = code if code in _CATALOGS else "en"
@@ -30,7 +29,6 @@ def _dual(s):
 
 
 def tr(s):
-    """Active-language string for English key"""
     if not isinstance(s, str):
         return s
     cat = _CATALOGS.get(_LANG)
@@ -50,7 +48,6 @@ def _in_catalog(key):
 
 
 def translate(text, lang):
-    """Translate English key into given language."""
     cat = _CATALOGS.get(str(lang)[:2])
     return cat[text] if cat and text in cat else text
 
@@ -62,7 +59,6 @@ def bilingual(en, sep=" / "):
 
 
 def sheet_value(en, sheet_lang, stacked=False):
-    """Localize data value for xlsx."""
     if sheet_lang == "both":
         return bilingual(en, "\n" if stacked else " / ")
     if sheet_lang in (None, "", "en"):
@@ -75,15 +71,28 @@ def sheet_label(en, sheet_lang):
     return sheet_value(en, sheet_lang, stacked=True)
 
 
-def english_of(text):
-    """Recover English key from rendered string"""
-    if _LANG == "en":
+def english_of(text, prev=None):
+    if prev:
+        # switch knows text's language
+        if prev == "en" and any(text in c for c in _CATALOGS.values()):
+            return text
+        got = _REV.get(prev, {}).get(text)
+        if got is not None:
+            return got
+    got = _REV.get(_LANG, {}).get(text)
+    if got is not None:
+        return got
+    # key wins over reverse map
+    if any(text in cat for cat in _CATALOGS.values()):
         return text
-    return _REV.get(_LANG, {}).get(text, text)
+    for rev in _REV.values():
+        if text in rev:
+            return rev[text]
+    return text
 
 
-def retranslate(root):
-    """Re-apply active language to labels and tooltips"""
+def retranslate(root, prev=None):
+    """`prev` is language being left."""
     from PySide6.QtWidgets import (QLabel, QAbstractButton, QGroupBox,
                                    QWidget)
 
@@ -92,13 +101,13 @@ def retranslate(root):
              (QGroupBox, "title", "setTitle"))
     for cls, get, setn in specs:
         for w in root.findChildren(cls):
-            _retr(w, getattr(w, get), getattr(w, setn), "i18n_src")
+            _retr(w, getattr(w, get), getattr(w, setn), "i18n_src", prev)
     # tooltips separate source prop
     for w in root.findChildren(QWidget):
-        _retr(w, w.toolTip, w.setToolTip, "i18n_tip")
+        _retr(w, w.toolTip, w.setToolTip, "i18n_tip", prev)
 
 
-def _retr(w, getter, setter, prop):
+def _retr(w, getter, setter, prop, prev=None):
     if w.property("i18n_skip"):
         return
     src = w.property(prop)
@@ -109,7 +118,7 @@ def _retr(w, getter, setter, prop):
         if _dual(cur):
             src = cur
         else:
-            key = english_of(cur)
+            key = english_of(cur, prev)
             if not _in_catalog(key):
                 return
             src = key

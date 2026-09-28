@@ -64,8 +64,9 @@ APP = {
         ("bubbler/models", "models"),
     ] if (REPO / "bubbler" / "models").is_dir() else []),
 
-    "data_files": ([("bubbler/gpu_worker.py", "gpu_worker.py")]
-                   if OS == "Linux" else []),
+    "data_files": [("bubbler/step_worker.py", "step_worker.py")] + (
+        [("bubbler/gpu_worker.py", "gpu_worker.py")]
+        if OS == "Linux" else []),
 
     "noinclude_data": [
         "paddle/libs/*.so*",
@@ -190,6 +191,17 @@ def main() -> int:
             shutil.rmtree(stale, ignore_errors=True)
         elif stale.exists():
             stale.unlink()
+
+    sys.path.insert(0, str(REPO))
+    from bubbler.reader.vision.runtime import telemetry_builds
+    phones = telemetry_builds()
+    if phones:
+        print("\nBUILD REFUSED: this onnxruntime carries Microsoft telemetry:")
+        for p in phones:
+            print("  " + p)
+        print("Pin onnxruntime <1.28 in requirements-build-*.txt and rebuild "
+              "the build venv.")
+        return 1
 
     cmd = flags()
     print("Running Nuitka:\n  " + " \\\n  ".join(cmd) + "\n")

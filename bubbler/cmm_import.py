@@ -20,18 +20,16 @@ def _pick(fieldmap, aliases):
 
 
 def _sniff_delim(lines):
-    """Sniff delimiter default comma."""
     sample = "\n".join(lines[:5])
     try:
         return csv.Sniffer().sniff(sample, delimiters=";,\t").delimiter
     except (csv.Error, IndexError):
         head = lines[0] if lines else ""
-        best = max(";,\t", key=head.count)      # most in header
+        best = max(";,\t", key=head.count)
         return best if head.count(best) else ","
 
 
 def parse_cmm_csv(text):
-    """Parse CMM CSV to records and errors."""
     records, errors = [], []
     if isinstance(text, str):
         lines = text.splitlines()
@@ -79,7 +77,6 @@ def _base(bubble):
 
 
 def match_to_ledger(records, ledger):
-    """Match records to ledger by bubble base."""
     by_base = {}
     for idx, row in enumerate(ledger):
         rb = _base(row.get("bubble"))

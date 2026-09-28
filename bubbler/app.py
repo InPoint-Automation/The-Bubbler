@@ -5,7 +5,6 @@
 
 import os
 import sys
-import time
 
 import fitz
 from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, QEvent
@@ -23,16 +22,19 @@ from .common import (APP_NAME, RADIUS, FONTSZ, RED, LEADER_EXITS,
                      tier_rgb, tier_shape, bubble_shape_points, tier_for_type,
                      fit_fontsz, point_in_bubble, shape_extent, shape_radius,
                      shape_support, widest_extent,
-                     measure_state, METHODS)
+                     measure_state, count_rows_of)
 from .units_mixin import UnitsMixin
-from .config import (CFG_DEFAULT, load_cfg, save_cfg, ops_seq)
-from .scanlib import (expand_hole_row, suggest_gage, GAGES,
-                      general_tol, gentol_callout, scan_presets)
+from .config import (CFG_DEFAULT, load_cfg, save_cfg, ops_seq, gentol_auto,
+                     leaders_on)
+from .gaging import suggest_gage, gage_choices
+from .gentol import general_tol, gentol_callout
+from .scanrows import (expand_hole_row, row_facet, facet_rank, scan_presets,
+                       with_qty_row)
 from .sheet import SheetWriter
 from .icons import make_pixmap, set_ui_scale, set_accent
 from .dialogs import BubbleDialog
 from .hotbar_mixin import HotbarMixin
-from .i18n import tr, set_lang, retranslate
+from .i18n import tr, set_lang, get_lang, retranslate
 from .measure_mixin import MeasureMixin
 from .geometry_mixin import GeometryMixin
 from .history_mixin import HistoryMixin
@@ -55,6 +57,14 @@ from .runs_mixin import RunsMixin
 from .store import BubbleStore, SessionReadOnly, session_lock_text
 from .viewport import Viewport
 from .tools import make_tools
+
+
+def _idx(rows, r):
+    """Index by identity. Equal dicts would collide."""
+    for i, x in enumerate(rows):
+        if x is r:
+            return i
+    raise ValueError("row not in ledger")
 
 
 class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
@@ -114,7 +124,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
 
     @property
     def drawing(self):
-        """Per-drawing settings in session."""
         return self.store.drawing
 
     def __init__(self, pdf_path, xlsx_path, cfg=None):
@@ -132,12 +141,9 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             gage_column=self.cfg.get("sheet_gage_column", False),
             method_column=self.cfg.get("sheet_method_column", False),
             type_column=self.cfg.get("sheet_type_column", False),
-            # match FAI requirement string
             units=self.cfg.get("units", "iso_mm"), cfg=self.cfg,
             inspections=sorted(scan_presets(self.cfg)))
         self.doc = fitz.open(pdf_path)
-        # H4 monotonic open time
-        self._opened_monotonic = time.monotonic()
         self.viewport = Viewport()
         self.store = BubbleStore()
         self.measure_mode = False
@@ -152,7 +158,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._load_session()
         self._ingest_sheet_edits()
         self._ingest_header()
-        self._stamp_run_identity()        # run inherits title block
+        if self.store.run_moved_on_load:
+            # header is last REVIEWED run, not this
+            self._sync_header_from_run()
+        else:
+            self._stamp_run_identity()
+        self._default_inspector()
         self.store.migrate_uids()
         self.store.renumber()
         self.dlg_pos = self.cfg.get("dlg_pos") or None
@@ -193,10 +204,14 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.last = {
             "type": self.cfg.get("default_type", TYPES[0]),
             "tier": self.cfg.get("default_tier", ""),
-            "iso_on": bool(self.cfg.get("rib_iso_on")),
+            "iso_on": gentol_auto(self.cfg, self.drawing),
             "tsym": "", "tmax": "", "tmin": "",
             "icls": str(self.cfg.get("default_iso_class", "m")),
         }
+        # hand-picked class outlives window
+        hand = (self.drawing or {}).get("icls_hand")
+        if hand in ("f", "m", "c", "v"):
+            self.last["icls"], self.last["icls_hand"] = hand, True
 
         self._base_font = QFont(QApplication.instance().font())
         self._apply_ui_scale()
@@ -227,6 +242,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._install_shortcuts()
         QApplication.instance().installEventFilter(self)
         retranslate(self)
+        self._ui_lang = get_lang()
         self._prewarm_vision()
 
         self.resize(1500, 950)
@@ -245,7 +261,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             QTimer.singleShot(0, self._show_session_lock)
 
     def _restore_window(self):
-        """Restore saved window geometry."""
         try:
             from PySide6.QtCore import QByteArray
             g = self.cfg.get("win_geometry")
@@ -261,14 +276,16 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         try:
             before = (self.cfg.get("win_geometry"), self.cfg.get("panel_w"),
                       dict(self.cfg.get("panel_col_w") or {}),
-                      self.cfg.get("calc_history"))
+                      self.cfg.get("calc_history"), self.cfg.get("nav_w"))
             g = bytes(self.saveGeometry().toHex()).decode("ascii")
             self.cfg["win_geometry"] = g
             self._save_panel_width()
+            self._save_nav_width()
             self._calc_save_history()
             if before != (g, self.cfg.get("panel_w"),
                           dict(self.cfg.get("panel_col_w") or {}),
-                          self.cfg.get("calc_history")):
+                          self.cfg.get("calc_history"),
+                          self.cfg.get("nav_w")):
                 save_cfg(self.cfg)
         except Exception:
             pass
@@ -292,7 +309,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         sc("PageDown", lambda: self.flip(1))
 
     def on_key(self, e):
-        """View-level keys when canvas has focus."""
         k = e.key()
         txt = e.text()
         if self._correct_mode:
@@ -418,24 +434,57 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         save_cfg(self.cfg)
         self.render()
 
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.ActivationChange and self.isActiveWindow():
+            try:
+                self._sync_units_controls()
+                self.last["iso_on"] = self.chk_iso.isChecked()
+            except Exception:
+                pass
+            self._sync_ui_lang()
+
+    def _sync_ui_lang(self):
+        lang = get_lang()
+        old = getattr(self, "_ui_lang", lang)
+        if old != lang:
+            self.cfg["language"] = lang       # else save reverts
+            retranslate(self, prev=old)
+            self.render()
+        self._ui_lang = lang
+
     def _iso_changed(self, on):
-        # arms drawing ladder
         on = bool(on)
-        self.cfg["dp_on"] = on
         self.last["iso_on"] = on
-        self.cfg["rib_iso_on"] = on
-        save_cfg(self.cfg)
+        # per drawing, Settings is default
+        self.drawing["gentol_auto"] = on
+        if not self.store.read_only:
+            self._save_session()
         self._sync_gentol()
         self._qbar_refresh()
 
     def _icls_changed(self, _i=None):
         self.last["icls"] = self.cb_icls.currentText()
-        self.cfg["default_iso_class"] = self.last["icls"]
-        save_cfg(self.cfg)
+        self.last["icls_hand"] = True
+        self.drawing["icls_hand"] = self.last["icls"]
+        # printed class again undoes it
+        from .gentol import iso_class_from_gtols
+        try:
+            printed = iso_class_from_gtols(self._page_gtols())
+        except Exception:
+            printed = None
+        if printed and printed == self.last["icls"]:
+            self.last["icls_hand"] = False
+            self.drawing.pop("icls_hand", None)
+        self._sync_gentol()
+        # per drawing, not install default
+        if not self.store.read_only:
+            self._save_session()
 
     def _lead_changed(self, on):
-        self.cfg["leaders"] = bool(on)
-        save_cfg(self.cfg)
+        self.drawing["leaders"] = bool(on)
+        if not self.store.read_only:
+            self._save_session()
         self._qbar_refresh()
 
     def _autobub_changed(self, on):
@@ -465,7 +514,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         try:
             return bool(self.chk_lead.isChecked())
         except Exception:
-            return bool(self.cfg.get("leaders"))
+            return leaders_on(self.cfg, self.drawing)
 
     def suggest(self, d):
         return suggest_gage(d, self.cfg, self.drawing)
@@ -484,29 +533,11 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.cb_icls.setCurrentText(self.last.get("icls", "m"))
         set_combo_key(self.cb_tier, self.last.get("tier", ""))
 
-    # sticky next-bubble keys
-    _RIB_STICKY = (("type", "default_type"), ("tier", "default_tier"),
-                   ("icls", "default_iso_class"))
-
     def reset_ribbon(self):
-        """Reset next-bubble stickies to shipped defaults."""
-        for lkey, ckey in self._RIB_STICKY:
-            self.cfg[ckey] = CFG_DEFAULT[ckey]
-            self.last[lkey] = CFG_DEFAULT[ckey]
-        self.cfg["rib_iso_on"] = CFG_DEFAULT["rib_iso_on"]
-        self.cfg["dp_on"] = CFG_DEFAULT["dp_on"]
-        self.last["iso_on"] = bool(CFG_DEFAULT["rib_iso_on"])
         self.last.update({"tsym": "", "tmax": "", "tmin": ""})
-        save_cfg(self.cfg)
-        chk = getattr(self, "chk_iso", None)
-        if chk is not None:
-            chk.blockSignals(True)
-            chk.setChecked(self.last["iso_on"])
-            chk.blockSignals(False)
         self._rib_sync()
-        self._sync_units_controls()
         self._qbar_refresh()
-        self.set_status(tr('next-bubble options reset'))
+        self.set_status(tr('next-bubble tolerances cleared'))
 
     def _cell_edit(self, idx, colname):
         if self._edit_blocked():
@@ -521,9 +552,10 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             if ok:
                 val = TIERS[labels.index(val)] if val in labels else ""
         elif colname == "gage":
-            curidx = GAGES.index(cur) if cur in GAGES else 0
-            val, ok = QInputDialog.getItem(self, "gage", "gage", GAGES,
-                                           curidx, True)
+            names = gage_choices(self.cfg, cur, blank=True)
+            val, ok = QInputDialog.getItem(
+                self, "gage", "gage", names,
+                names.index(cur.strip()) if cur.strip() in names else 0, False)
         else:
             val, ok = QInputDialog.getText(self, colname, colname,
                                            text=cur)
@@ -539,18 +571,136 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._panel_highlight(idx, scroll=False)
         self.set_status("edited #%s %s" % (d.get("bubble", "?"), colname))
 
+    # written only when set. Absent means cleared
+    _DIALOG_OPTIONAL = ("edge_break", "qty", "limit")
+
+    def _facet_siblings(self, d):
+        # hole by type, not facet stamp
+        thread = str(d.get("type") or "").startswith("thread")
+        if not thread and (row_facet(d) != "hole" or not str(
+                d.get("type") or "").startswith(("hole", "thru"))):
+            return None
+        key = d.get("bgroup") or d.get("uid")
+        group = [r for r in self.ledger
+                 if (r.get("bgroup") or r.get("uid")) == key]
+        # this hole's facets only. Next hole/thread/fit ends run
+        hr = facet_rank("hole", self.cfg)
+        p = next(i for i, r in enumerate(group) if r is d)
+
+        def brk(r):
+            t = str(r.get("type") or "")
+            return (row_facet(r) == "hole" or r.get("facet") == "hole"
+                    or t.startswith(("thread", "fit")))
+
+        out = []
+        for step, wants in ((-1, lambda k: k < hr), (1, lambda k: k > hr)):
+            i = p + step
+            while 0 <= i < len(group):
+                r = group[i]
+                if brk(r):
+                    break
+                if r.get("facet") == "qty":
+                    i += step
+                    continue          # count row separate
+                f = row_facet(r)
+                if f is not None and wants(facet_rank(f, self.cfg)) and (
+                        not thread or f.startswith("tap_drill")):
+                    out.append(r)
+                i += step
+        return out
+
+    def _apply_facets(self, d, sibs, got):
+        """Fold dialog facets back. Untouched rows keep hand tolerance."""
+        have = {row_facet(r): r for r in sibs}
+        seen = set()
+        added = []
+        for g in got:
+            f = g.get("facet")
+            seen.add(f)
+            old = have.get(f)
+            if old is None:
+                nr = dict(g)
+                nr.update({k: d.get(k) for k in ("uid", "bgroup", "page",
+                                                  "x", "y", "bx", "by")
+                           if k in d})
+                nr.update(bubble=str(base_of(d.get("bubble", ""))),
+                          sheet_row=None)
+                nr.pop("proposal", None)
+                nr.pop("rkey", None)
+                if not nr.get("gage"):
+                    nr["gage"] = self.suggest(nr)
+                nr["tier"] = tier_for_type(nr.get("type"), self.cfg,
+                                           nr.get("tier", ""))
+                self.ledger.insert(_idx(self.ledger, d) + 1, nr)
+                added.append(nr)
+            elif old.get("nominal") != g.get("nominal"):
+                # value only. Tolerance derives from hole
+                for k in ("nominal", "feature", "pin"):
+                    if k in g:
+                        old[k] = g[k]
+                old["facet"] = f
+        def f_kept(r):
+            return row_facet(r) in seen
+
+        mine = [d] + [r for r in sibs if f_kept(r)] + added
+        slots = sorted(_idx(self.ledger, r) for r in mine)
+        mine.sort(key=lambda r: facet_rank(row_facet(r), self.cfg))
+        for i, r in zip(slots, mine):
+            self.ledger[i] = r
+        for f, old in have.items():
+            if f in seen:
+                continue
+            if old.get("sheet_row"):
+                self.writer.clear_row(old["sheet_row"])
+                try:
+                    self.writer.save()
+                except Exception:
+                    pass
+            del self.ledger[_idx(self.ledger, old)]
+
     def edit_ledger_row(self, idx):
         if self._edit_blocked():
             return
         d = self.ledger[idx]
+        if d.get("facet") == "qty":
+            # count edited on its parent row
+            key = d.get("bgroup") or d.get("uid")
+            for i, r in enumerate(self.ledger):
+                if (r.get("bgroup") or r.get("uid")) == key \
+                        and r.get("facet") != "qty":
+                    idx, d = i, r
+                    break
         at = tuple(self.dlg_pos) if self.dlg_pos else None
         had_leader = d.get("leader",
                            (d.get("bx", d["x"]), d.get("by", d["y"]))
                            != (d["x"], d["y"]))
+        had_qty = int(d.get("qty") or 1) > 1
+        sibs = self._facet_siblings(d)
+        key = d.get("bgroup") or d.get("uid")
+        group = [r for r in self.ledger
+                 if (r.get("bgroup") or r.get("uid")) == key]
+        from .config import units_of
+        from .reportrow import rows_from_ledger
+        u = units_of(self.cfg, self.drawing)
+        group_rows = []
+        for r in group:
+            try:
+                req = rows_from_ledger([r], self.cfg, u)[0].requirement
+            except Exception:
+                req = ""
+            group_rows.append({"bubble": r.get("bubble"),
+                               "type": r.get("type"),
+                               "feature": r.get("feature"),
+                               "requirement": req})
         dlg = BubbleDialog(self, d["bubble"], last=None, at=at,
                            cfg=self.cfg, edit_row=d,
                            session=self.drawing, gtols=self.gtols_now(),
-                           leader_default=had_leader)
+                           leader_default=had_leader,
+                           siblings=sibs,
+                           qty_on=bool(count_rows_of(d, self.ledger)),
+                           group_rows=group_rows if len(group) > 1 else None,
+                           group_at=next((i for i, r in enumerate(group)
+                                          if r is d), 0))
         dlg.exec()
         if dlg.last_geo:
             self.dlg_pos = dlg.last_geo
@@ -560,12 +710,27 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             return
         self.snapshot()
         new = dlg.result_rows[0]
+        # retyped row keeps its facets
+        was_thread = str(d.get("type") or "").startswith("thread")
+        nt = str(new.get("type") or "")
+        same = (nt.startswith("thread") if was_thread
+                else nt.startswith(("hole", "thru")))
+        if (sibs is not None and getattr(dlg, "_facet_edit", False)
+                and same):
+            self._apply_facets(d, sibs, dlg.result_rows[1:])
         keep = {k: d.get(k) for k in ("bubble", "uid", "page", "x", "y",
                                       "sheet_row", "measured", "ops", "bx",
                                       "by", "lexit") if k in d}
-        d.clear()
+        # drop only dialog-authored keys
+        for k in tuple(new) + self._DIALOG_OPTIONAL:
+            d.pop(k, None)
         d.update(new)
         d.update(keep)
+        n_now = int(d.get("qty") or 1)
+        if n_now > 1:
+            self._sync_qty_row(d, getattr(dlg, "qty_ticked", None))
+        elif had_qty:
+            self._sync_qty_row(d, False)      # count went, row goes
         lead = bool(new.get("leader", had_leader))
         for r2 in self.ledger:
             if r2.get("uid") == d["uid"]:
@@ -578,7 +743,10 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                                         tier=d.get("tier"))
             self._set_uid_pos(d["uid"], bx=nbx, by=nby)
         elif not lead:
-            self._set_uid_pos(d["uid"], bx=d["x"], by=d["y"])
+            nbx, nby, _ = self.place_bubble(
+                d["x"], d["y"], page_i=d.get("page"), rect=d.get("rect"),
+                lead=False, tier=d.get("tier"), skip=base_of(d["bubble"]))
+            self._set_uid_pos(d["uid"], bx=nbx, by=nby)
         want = getattr(dlg, "new_number", None)
         if want is not None and want != base_of(d["bubble"]):
             self.store.set_number(d["uid"], want)
@@ -587,6 +755,15 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._save_session()
         self.refresh_panel()
         self.render()
+        nxt = getattr(dlg, "switch_to", None)
+        if nxt is not None and 0 <= nxt < len(group):
+            target = group[nxt]
+            for i, r in enumerate(self.ledger):
+                if r is target:
+                    self.edit_ledger_row(i)
+                    break
+            else:
+                self.set_status(tr('That row was removed by the edit.'))
 
     _SPINNER = "|/-\\"
 
@@ -596,7 +773,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                                           self._busy_msg))
 
     def set_busy(self, msg):
-        """Show status-bar spinner with tr'd msg."""
         if getattr(self, "_busy_lbl", None) is None:
             return
         self._busy_msg = msg
@@ -617,8 +793,9 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             return
         try:
             from PySide6.QtCore import QThreadPool
-            from . import vision, scanworker
-            vision.clear_cache()
+            from . import scanworker
+            from .reader.vision import runtime
+            runtime.clear_cache()
             self.set_busy(tr('Warming reader'))
             task = scanworker.PrewarmTask(dict(self.cfg))
             task.signals.done.connect(self.clear_busy)
@@ -627,14 +804,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             self.clear_busy()
 
     def _load_session(self):
-        """Load session sidecar."""
         ok = self.store.load_session(self.session_path)
         if not ok or self.store.read_only:
             self._session_lock_pending = True
         return ok
 
     def _show_session_lock(self):
-        """Explain refusal once at load time."""
         self._session_lock_pending = False
         self._session_ro_warned = True
         try:
@@ -661,7 +836,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             pass
 
     def _session_start_over(self):
-        """Rename damaged sidecar aside so drawing saves."""
         bak = self.store.start_over(self.session_path)
         if not bak:
             self.set_status(tr('session NOT saved'), icon="warn")
@@ -673,14 +847,12 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._save_session()
 
     def _edit_blocked(self):
-        """Refuse edit session cannot keep."""
         if not self.store.read_only:
             return False
         self._show_session_lock()
         return True
 
     def _save_session(self):
-        """Write session sidecar."""
         if self.store.read_only:
             if not getattr(self, "_session_ro_warned", False):
                 self._show_session_lock()
@@ -751,8 +923,10 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                     d["x"], d["y"] = ax, ay
 
     def adopt_iso_class(self, gtols):
-        """Drawing-declared ISO 2768 class beats ribbon setting."""
-        from .scanlib import iso_class_from_gtols
+        """Printed ISO class beats ribbon, hand pick beats both."""
+        from .gentol import iso_class_from_gtols
+        if self.last.get("icls_hand"):
+            return None
         cls = iso_class_from_gtols(gtols)
         if not cls or cls == self.last.get("icls"):
             return None
@@ -765,7 +939,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         return cls
 
     def _apply_general_tol(self, rw, h, gtols, iso_on=False):
-        """Lay drawing general tolerance on row that has none."""
         if rw.get("tol_sym") is not None or rw.get("tol_max") is not None \
                 or rw.get("tol_min") is not None:
             return rw
@@ -791,7 +964,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
     HIT_SLOP = 3.0
 
     def hit_bubble(self, x, y):
-        """Hit-test drawn balloon outline."""
         rad = float(self.cfg.get("radius", RADIUS))
         tiers = self._bubble_tiers(self.page_i)
         for b, _, _, bx, by in reversed(self.page_bubbles()):
@@ -852,7 +1024,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             self._set_toast_icon(None)
 
     def _apply_lock_chrome(self):
-        """Grey out Save while session refused."""
         b = getattr(self, "btn_save", None)
         if b is not None:
             ro = bool(self.store.read_only)
@@ -935,7 +1106,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
 
     @staticmethod
     def _draw_bubble_shape(painter, cx, cy, rad, shape):
-        """Balloon body by tier."""
         pts = bubble_shape_points(shape, cx, cy, rad)
         if pts is None:
             r = shape_radius(shape, rad)
@@ -958,7 +1128,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             if d.get("page") == self.page_i:
                 rowmap.setdefault(base_of(d["bubble"]), d)
 
-        # one font every tier
         rcfg = float(self.cfg.get("radius", RADIUS))
         fonts = {}
 
@@ -982,7 +1151,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 ahx, ahy = scr(tx, ty)
                 ex = LEXIT.get(self._lexit_of(num))
                 if ex is not None:
-                    # start on outline
                     sup = shape_support(shape, rad, ex[0], ex[1])
                     sx0, sy0 = cx + ex[0] * sup, cy + ex[1] * sup
                 else:
@@ -1014,7 +1182,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(QPointF(cx, cy), sr, sr)
             painter.setPen(QPen(col))
-            painter.setFont(_num_font(str(num)))   # one size every tier
+            painter.setFont(_num_font(str(num)))
             tw = max(rad, fit_fontsz(rcfg, fsz, str(num)) * self.zoom * 1.2)
             painter.drawText(QRectF(cx - tw, cy - tw, 2 * tw, 2 * tw),
                              Qt.AlignCenter, str(num))
@@ -1035,7 +1203,7 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             cx, cy = scr(bx, by)
             painter.setPen(QPen(blue, 3))
             painter.setBrush(Qt.NoBrush)
-            fr = widest_extent(rad, self.cfg) + 5   # clears every shape
+            fr = widest_extent(rad, self.cfg) + 5
             painter.drawEllipse(QPointF(cx, cy), fr, fr)
         if self._scanhl and self._scanhl[0] == self.page_i:
             rc = self._scanhl[1]
@@ -1088,14 +1256,13 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
             self._paint_debug(painter, scr)
 
     def _page_sections(self):
-        """Cached callout sections for page (debug)."""
         key = (id(self.doc), self.page_i)
         cache = self.__dict__.get("_sec_cache")
         if cache is not None and cache[0] == key:
             return cache[1]
-        from bubbler import scanpos
+        from bubbler.reader import layout
         try:
-            secs = scanpos.page_sections(self.doc[self.page_i], self.cfg)
+            secs = layout.page_sections(self.doc[self.page_i], self.cfg)
         except Exception:
             secs = []
         self._sec_cache = (key, secs)
@@ -1136,8 +1303,8 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         return p0, p1
 
     def _paint_sections(self, painter, scr):
-        multi = QColor(170, 40, 200)          # merged stack
-        single = QColor(150, 150, 150)         # lone line
+        multi = QColor(170, 40, 200)
+        single = QColor(150, 150, 150)
         for s in self._page_sections():
             col = multi if s["n"] > 1 else single
             self._paint_box(painter, scr, s["rect"], col,
@@ -1156,44 +1323,41 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                             dashed=False)
 
     def _region_dets(self, page_i=None):
-        """Cached raw region boxes (x0,y0,x1,y1,conf,ci[,quad]). Shared by the
-        debug overlay and click-to-bubble so the model runs once per page."""
+        """Cached raw region boxes. Model runs once per page."""
         if page_i is None:
             page_i = self.page_i
         key = (id(self.doc), page_i)
         c = self.__dict__.get("_rgn_det_cache")
         if c is not None and c[0] == key:
             return c[1]
-        from . import vision
+        from .reader.vision import regions
         try:
-            out = list(vision._region_boxes(self.doc[page_i], self.cfg))
+            out = list(regions._region_boxes(self.doc[page_i], self.cfg))
         except Exception:
             out = []
         self._rgn_det_cache = (key, out)
         return out
 
     def _page_regions(self):
-        """Cached detector-block boxes for page (debug)."""
-        from . import vision
+        from .reader.vision import runtime
         out = []
         for b in self._region_dets():
             ci = int(b[5]) if len(b) > 5 else -1
-            cls = (vision._REGION_CLASSES[ci]
-                   if 0 <= ci < len(vision._REGION_CLASSES) else "?")
+            cls = (runtime._REGION_CLASSES[ci]
+                   if 0 <= ci < len(runtime._REGION_CLASSES) else "?")
             out.append((b[0], b[1], b[2], b[3],
                         "%s %.0f%%" % (cls, float(b[4]) * 100)))
         return out
 
     def _page_symbols(self):
-        """Cached GD&T symbol-detector boxes for page (debug)."""
         key = (id(self.doc), self.page_i)
         c = self.__dict__.get("_sym_dbg_cache")
         if c is not None and c[0] == key:
             return c[1]
-        from . import vision
+        from .reader.vision import symbols
         out = []
         try:
-            for env, tok in vision._symbol_dets(self.doc[self.page_i], self.cfg):
+            for env, tok in symbols._symbol_dets(self.doc[self.page_i], self.cfg):
                 out.append((env[0], env[1], env[2], env[3], str(tok).strip()))
         except Exception:
             out = []
@@ -1324,7 +1488,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         if len(rows) > 1:
             m.addAction(tr('Split into separate bubbles'),
                         lambda: self.split_bubble(hit))
-            # merge
         m.addSeparator()
         m.addAction(tr('Delete bubble'),
                     lambda: self._delete_bases([hit]))
@@ -1385,14 +1548,13 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.render()
 
     def split_bubble(self, base):
-        """Explode multi-row callout."""
         rows = [(i, d) for i, d in enumerate(self.ledger)
                 if base_of(d["bubble"]) == base]
         if len(rows) < 2:
             self.set_status(tr('nothing to split'))
             return
         self.snapshot()
-        step = float(self.cfg.get("radius", 14)) * 2.2
+        step = float(self.cfg.get("radius", RADIUS)) * 2.2
         for n, (i, d) in enumerate(rows[1:], start=1):
             d["uid"] = self.store.new_uid()
             d["x"] = d["x"] + step * n
@@ -1504,7 +1666,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.munits_cb.currentIndexChanged.connect(self._munits_changed)
         self.munits_lbl = QLabel(tr('measure in'))
         self.munits_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
-        # stage being inspected
         op_lbl = QLabel(tr('op:'))
         op_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
         self.mop_cb = QComboBox()
@@ -1551,13 +1712,11 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         b_clear.clicked.connect(self._measure_clear)
         self.mprev = QLabel("")
         self.mprev.setStyleSheet("color:#8a6d3b; font-size:8pt;")
-        # method and gage
         gage_lbl = QLabel(tr('how'))
         gage_lbl.setStyleSheet("color:#5a5a5a; font-size:8pt;")
         self.mhow_cb = QComboBox()
-        self.mhow_cb.setEditable(True)
-        self.mhow_cb.addItems(list(METHODS) + [g for g in GAGES
-                                               if g not in METHODS])
+        self.mhow_cb.setEditable(False)
+        self._fill_how()
         self.mhow_cb.setMinimumWidth(120)
         self.mhow_cb.setToolTip(tr('Method or gage for this measurement.'))
         self.mhow_cb.currentTextChanged.connect(self._mhow_changed)
@@ -1592,7 +1751,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self._fill_munits()
 
     def _append_callout(self, rows, x, y, rect=None):
-        """Append rows as one callout."""
         want = bool(rows[0].get("leader", self.use_leaders())) if rows \
             else self.use_leaders()
         bx, by, lead = self.place_bubble(x, y, rect=rect, lead=want,
@@ -1600,18 +1758,21 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
                                                              else {}))
         uid = self.store.new_uid()
         n = 0
-        for d in rows:
-            for rr in expand_hole_row(d, self.cfg):
-                if not rr.get("gage"):
-                    rr["gage"] = self.suggest(rr)
-                rr.setdefault("bubble", "?")
-                rr["leader"] = lead          # flag matches offset
-                rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
-                                           rr.get("tier", ""))
-                rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
-                           "bx": bx, "by": by, "sheet_row": None})
-                self.ledger.append(rr)
-                n += 1
+        flat = [rr for d in rows for rr in expand_hole_row(d, self.cfg)]
+        for rr in with_qty_row(flat, self.cfg):
+            if not rr.get("gage") and rr.get("facet") != "qty":
+                rr["gage"] = self.suggest(rr)
+            rr.setdefault("bubble", "?")
+            rr["leader"] = lead
+            rr["tier"] = tier_for_type(rr.get("type"), self.cfg,
+                                       rr.get("tier", ""))
+            rr.update({"uid": uid, "page": self.page_i, "x": x, "y": y,
+                       "bx": bx, "by": by, "sheet_row": None})
+            if rect and not rr.get("rect"):
+                # obstacle and F9 crop
+                rr["rect"] = [float(v) for v in rect[:4]]
+            self.ledger.append(rr)
+            n += 1
         return n
 
     def _balloon_from_rows(self, rows, x, y, rect=None):
@@ -1626,7 +1787,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         self.set_status(tr('ballooned %d rows') % n)
 
     def _bubbles_in_rect(self, rect, page_i=None):
-        """Bubbles in area."""
         x0, y0, x1, y1 = rect
         out = []
         for num, ax, ay, _bx, _by in self.page_bubbles(page_i):
@@ -1635,7 +1795,6 @@ class MainWindow(MeasureMixin, GeometryMixin, HistoryMixin, PanelMixin,
         return out
 
     def _regroup_capture(self, bases, rows, x, y, rect=None):
-        """Drop bubbles in box."""
         if not rows:
             return
         self.snapshot()

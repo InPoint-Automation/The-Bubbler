@@ -16,10 +16,8 @@ from .units import INCH, MM, convert_units
 
 _ACTIVE = "#2b6cb0"
 _IDLE = "#c8c8c8"
-HIST_MAX = 10          # dimension stack cap
+HIST_MAX = 10
 
-# a real-calculator look: base keys, then role tints (operator/equals/clear/
-# function/send) via the calcrole property
 _CALC_QSS = """
 #calcframe QPushButton {
     border:1px solid #c3ccd6; border-radius:6px; background:#f7f9fc;
@@ -46,8 +44,6 @@ QListWidget#calchist::item:hover { background:#eef4fc; }
 
 
 class CalcEdit(QLineEdit):
-    """Enter evaluates expression"""
-
     def __init__(self, panel):
         super().__init__()
         self.panel = panel
@@ -68,8 +64,6 @@ class CalcEdit(QLineEdit):
 
 
 class CalcPanel(QWidget):
-    """Keypad calculator feeding measure field or clipboard"""
-
     _KEYS = [
         ("C", "7", "8", "9", "/"),
         ("(", "4", "5", "6", "*"),
@@ -77,8 +71,7 @@ class CalcPanel(QWidget):
         ("<", "0", ".", "=", "+"),
     ]
 
-    # QA/QC function buttons: (label, kind, payload, tooltip)
-    #   "ins" inserts a token, "op" applies a function to the current value
+    # (label, ins|op, payload, tooltip)
     _FUNCS_A = (
         (u"√", "ins", "sqrt(", 'Square root'),
         (u"x²", "op", lambda v: v * v, 'Square the value'),
@@ -98,7 +91,7 @@ class CalcPanel(QWidget):
         super().__init__()
         self.app = app
         self._just_eval = False
-        self.setMinimumSize(300, 430)   # a real calculator, not a strip
+        self.setMinimumSize(300, 430)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.frame = QFrame()
@@ -116,7 +109,6 @@ class CalcPanel(QWidget):
         self.res.setAlignment(Qt.AlignRight)
         root.addWidget(self.res)
 
-        # QA/QC function rows
         for spec in (self._FUNCS_A, self._FUNCS_B):
             fg = QGridLayout()
             fg.setSpacing(4)
@@ -148,7 +140,6 @@ class CalcPanel(QWidget):
                 grid.addWidget(b, r, c)
         root.addLayout(grid)
 
-        # convert display both ways
         row1 = QHBoxLayout()
         self.b_in_mm = QPushButton(u"in → mm")
         self.b_in_mm.setProperty("i18n_skip", True)
@@ -162,6 +153,14 @@ class CalcPanel(QWidget):
         self.b_mm_in.clicked.connect(lambda: self._convert(MM, INCH))
         row1.addWidget(self.b_in_mm)
         row1.addWidget(self.b_mm_in)
+        self.b_tools = QPushButton(tr('Tools...'))
+        self.b_tools.setFocusPolicy(Qt.NoFocus)
+        self.b_tools.setToolTip(tr('True position with bonus, fits, gage '
+                                   'ratio, thread wires, taper, tolerance '
+                                   'forms -- prefilled from the selected '
+                                   'bubble'))
+        self.b_tools.clicked.connect(self.open_tools)
+        row1.addWidget(self.b_tools)
         root.addLayout(row1)
 
         row2 = QHBoxLayout()
@@ -218,7 +217,6 @@ class CalcPanel(QWidget):
         self.disp.setFocus()
 
     def _apply(self, fn, tag):
-        """Apply a function to the current value, in place."""
         v = safe_eval(self.disp.text())
         if v is None:
             self.res.setText(tr('invalid'))
@@ -240,17 +238,14 @@ class CalcPanel(QWidget):
         self.hist.clear()
 
     def _hist_pick_result(self, item):
-        """Double-click: drop the RESULT into the display, to chain."""
         res = str(item.data(Qt.UserRole + 1))
         self.disp.setText(res)
         self.disp.setCursorPosition(len(res))
         self._just_eval = True
         self.disp.setFocus()
 
-    # ---- history ----
 
     def load_history(self, rows):
-        """Fill list from saved [expr, result] pairs"""
         self.hist.clear()
         for r in (rows or [])[:HIST_MAX]:
             try:
@@ -270,7 +265,6 @@ class CalcPanel(QWidget):
             self.hist.insertItem(at, it)
 
     def _hist_push(self, expr, res):
-        """Newest first deduped by expression"""
         for i in range(self.hist.count() - 1, -1, -1):
             if self.hist.item(i).data(Qt.UserRole) == expr:
                 self.hist.takeItem(i)
@@ -279,7 +273,6 @@ class CalcPanel(QWidget):
             self.hist.takeItem(self.hist.count() - 1)
 
     def history(self):
-        """Saved form list of [expr, result]"""
         out = []
         for i in range(self.hist.count()):
             it = self.hist.item(i)
@@ -287,7 +280,6 @@ class CalcPanel(QWidget):
         return out
 
     def _hist_pick(self, item):
-        """Reuse expression not result"""
         expr = item.data(Qt.UserRole)
         self.disp.setText(expr)
         self.disp.setCursorPosition(len(expr))
@@ -296,7 +288,6 @@ class CalcPanel(QWidget):
         self.disp.setFocus()
 
     def _set_active(self, on):
-        """Highlight panel while focused"""
         col = _ACTIVE if on else _IDLE
         self.frame.setStyleSheet(
             _CALC_QSS
@@ -356,6 +347,23 @@ class CalcPanel(QWidget):
     def _send(self):
         self.app._calc_send(self._result_text())
 
+    def open_tools(self):
+        from .calctools import ToolsDialog
+        from .config import units_of
+        app = self.app
+        sel = getattr(app, "sel", None) or ()
+        row = next((d for d in (getattr(app, "ledger", None) or ())
+                    if d.get("uid") in sel), None)
+        dlg = ToolsDialog(self, row=row, cfg=getattr(app, "cfg", {}),
+                          units=units_of(getattr(app, "cfg", {}),
+                                         getattr(app, "drawing", None)))
+        self._tools_dlg = dlg
+        if dlg.exec() and dlg.result is not None:
+            out = format_num(dlg.result)
+            self.disp.setText(out)
+            self.res.setText("= " + out)
+            self._just_eval = True
+
     def _copy(self):
         QApplication.clipboard().setText(self._result_text())
         self.app.set_status(tr('result copied'))
@@ -368,7 +376,6 @@ class CalcMixin:
         self._calc_dock.setObjectName("calc_dock")
         self._calc_dock.setWidget(self.calc_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, self._calc_dock)
-        # float by default
         self._calc_dock.setFloating(True)
         self._calc_dock.resize(320, 470)
         self._calc_dock.hide()
@@ -383,7 +390,7 @@ class CalcMixin:
         self._calc_dock.setVisible(show)
         if show:
             self._calc_dock.raise_()
-        self.calc_panel.disp.setFocus()      # ready to type
+        self.calc_panel.disp.setFocus()
 
     def _calc_save_history(self):
         """Persist tape into cfg caller saves"""
@@ -399,7 +406,6 @@ class CalcMixin:
             pass
 
     def _calc_send(self, value):
-        """Result to measure field else clipboard"""
         if getattr(self, "measure_mode", False) and getattr(self, "ment",
                                                             None) is not None:
             self.ment.setText(value)

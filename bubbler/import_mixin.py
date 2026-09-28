@@ -8,13 +8,12 @@ from PySide6.QtWidgets import (QFileDialog, QMessageBox, QInputDialog,
                                QTableWidgetItem, QDialogButtonBox,
                                QAbstractItemView)
 
-from .config import save_cfg
+from .config import ops_seq
 from .i18n import tr
 
 
 class ImportMixin:
     def _cmm_preview(self, records, m, errors):
-        """Confirm matched/unmatched/duplicate rows before apply"""
         status = {}
         for idx, rec in m["matched"]:
             tgt = self.ledger[idx].get("bubble") if idx < len(self.ledger) else "?"
@@ -89,15 +88,14 @@ class ImportMixin:
                                     tr('No balloon numbers matched.'))
             return
 
-        ops = self.cfg.get("ops_list") or ["op1"]
-        cur = self.cfg.get("cmm_import_op") or ops[0]
+        ops = ops_seq(self.cfg, self.drawing)
+        cur = self.drawing.get("cmm_import_op") or ops[0]
         op, ok = QInputDialog.getItem(
             self, tr('Import CMM/CSV'), tr('Import into op:'),
             ops, ops.index(cur) if cur in ops else 0, False)
         if not ok:
             return
-        self.cfg["cmm_import_op"] = op
-        save_cfg(self.cfg)
+        self.drawing["cmm_import_op"] = op
 
         self.snapshot()
         for idx, rec in matched:
@@ -108,7 +106,7 @@ class ImportMixin:
         self.redraw_overlay()
 
         parts = [tr('Imported %d into %s') % (len(matched), op)]
-        if not sess_ok:                   # in memory only
+        if not sess_ok:
             parts.append(tr('NOT saved - session file is read-only or '
                             'write failed.'))
         if m["unmatched"]:

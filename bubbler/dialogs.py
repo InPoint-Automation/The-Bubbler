@@ -3,24 +3,45 @@
 #
 # Bubble entry/edit dialog with hole-pattern rows.
 
+import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox,
                                QSpinBox, QPushButton, QFrame, QWidget,
                                QMessageBox)
 
-from .common import TYPES, TIERS, fnum
-from .config import CFG_DEFAULT, gentol_ladder, units_of
+from .common import TYPES, TIERS, fnum, keeps_limit
+from .scanrows import facet_order, row_facet
+from .config import CFG_DEFAULT, gentol_auto, gentol_ladder, units_of
 from .widgets import fill_keyed, combo_key, set_combo_key
 from .iso2768 import (ANGLE_SHORTEST_SIDE, is_angle_feature,
                       is_broken_edge, is_radius_feature)
 from .iso286 import fit_limits, is_fit_code
-from .scanlib import general_tol, gentol_exempt
+from .gentol import general_tol, gentol_exempt
 from .i18n import tr, retranslate
 from .units import format_nominal
 
 
+def _num(text, what):
+    try:
+        return fnum(text)
+    except (TypeError, ValueError, ZeroDivisionError):
+        raise ValueError(tr('%s: %s is not a number.')
+                         % (what, str(text or "").strip()))
+
+
+def _tol_num(text):
+    raw = str(text or "").strip()
+    if is_fit_code(raw):
+        try:
+            return fnum(raw)
+        except (TypeError, ValueError, ZeroDivisionError):
+            raise ValueError(tr('Fit %s: type the fit code in the '
+                                '± field, on a millimetre drawing.')
+                             % raw)
+    return _num(raw, tr('Tolerance'))
+
 class Var(object):
-    """Qt widget as get/set."""
 
     def __init__(self, getter, setter):
         self._get = getter
@@ -40,14 +61,51 @@ def _line_edit(width=None):
     return e
 
 
+_UNIT_SUFFIX = re.compile(
+    "^\\s*([+\\-\u00b1]?)\\s*(\\d+(?:(?:[ ]+|-)\\d+/\\d+)?(?:[.,]\\d*)?"
+    "(?:/\\d+)?|[.,]\\d+)\\s*(mm|in|inch|inches|\"|\u2033)\\s*$", re.I)
+
+
+def convert_unit_text(text, units):
+    """Unit-typed text to drawing units. None if unitless."""
+    m = _UNIT_SUFFIX.match(str(text or ""))
+    if not m:
+        return None
+    try:
+        # `1-1/4in` is `1 1/4in`
+        v = fnum(re.sub(r"^(\d+)-(\d+/\d+)$", r"\1 \2", m.group(2)))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    src_mm = m.group(3).lower() == "mm"
+    dst_mm = units != "asme_inch"
+    if src_mm and not dst_mm:
+        v = v / 25.4
+    elif not src_mm and dst_mm:
+        v = v * 25.4
+    sign = m.group(1) if m.group(1) in ("+", "-") else ""
+    # 9 places: 1/128in exact in mm
+    return sign + ("%.9f" % v).rstrip("0").rstrip(".")
+
+
+def _num_text(v):
+    """Exact round trip. %g lost digits."""
+    return "%.12g" % v
+
+
 class BubbleDialog(QDialog):
-    """Entry/edit for one balloon."""
 
     def __init__(self, parent, bubble_no, last=None, at=None, cfg=None,
                  edit_row=None, prefill=None, leader_default=None,
-                 session=None, gtols=None):
+                 session=None, gtols=None, siblings=None, group_rows=None,
+                 group_at=0, qty_on=None):
         super().__init__(parent)
+        self.qty_ticked = None
         self.edit = edit_row is not None
+        # sub-row balloon edited as one group
+        self.switch_to = None
+        self._siblings = {row_facet(s): s for s in (siblings or ())
+                          if row_facet(s) not in (None, "hole")}
+        self._facet_edit = self.edit and siblings is not None
         self.setWindowTitle((tr('Edit') + " #%s" if self.edit
                              else tr('Bubble') + " #%s") % bubble_no)
         self.bubble_no = bubble_no
@@ -59,12 +117,12 @@ class BubbleDialog(QDialog):
         self.last_geo = None
         cfg = cfg or {}
         self.cfg = cfg
-        self.session = session or {}   # per-drawing units/ladder
-        self.gtols = gtols or {}       # page printed general tols
+        self.session = session or {}
+        self.gtols = gtols or {}
         if last is None:
             last = {"type": cfg.get("default_type", TYPES[0]),
                     "tier": cfg.get("default_tier", ""),
-                    "iso_on": bool(cfg.get("rib_iso_on")),
+                    "iso_on": gentol_auto(cfg),
                     "icls": cfg.get("default_iso_class", "m")}
         self.iso_on = bool(last.get("iso_on")) and not self.edit
         self.icls = str(last.get("icls", "m"))
@@ -78,6 +136,10 @@ class BubbleDialog(QDialog):
 
         g = QGridLayout(self)
         r = 0
+
+        self._group_tbl = None
+        if self.edit and group_rows and len(group_rows) > 1:
+            r = self._build_group(g, r, group_rows, group_at)
 
         self.v_bubnum = None
         if self.edit:
@@ -116,7 +178,6 @@ class BubbleDialog(QDialog):
         g.addWidget(self.e_nom, r, 1, Qt.AlignLeft)
         r += 1
 
-        # broken-edge is author's call
         self.chk_edge = QCheckBox(tr('This is a broken edge'))
         self.chk_edge.setToolTip(
             tr('Edge break = the general "break sharp edges" note; ISO '
@@ -169,12 +230,26 @@ class BubbleDialog(QDialog):
         self.sp_qty.setValue(1)
         self.sp_qty.setMaximumWidth(70)
         self.sp_qty.setToolTip(
-            tr('Number of instances; the measure walk takes that many '
-               'readings and keeps the worst.'))
+            tr('Number of instances, printed as 2X. Bubble it to count '
+               'them and measure each one.'))
         self.v_qty = Var(lambda: self.sp_qty.value(),
                          lambda s: self.sp_qty.setValue(
                              int(float(str(s).replace(",", ".") or 1))))
-        g.addWidget(self.sp_qty, r, 1, Qt.AlignLeft)
+        qw = QWidget()
+        ql = QHBoxLayout(qw)
+        ql.setContentsMargins(0, 0, 0, 0)
+        ql.addWidget(self.sp_qty)
+        from .scanrows import facet_skipped as _fs
+        self.chk_qty = QCheckBox(tr('Bubble it'))
+        self.chk_qty.setChecked(bool(qty_on) if qty_on is not None
+                                else not _fs("qty", self.cfg))
+        self.chk_qty.setToolTip(tr(
+            'Add a count row, and take a reading per instance. Settings '
+            'sets the default and whether the report keeps the worst or '
+            'the average.'))
+        ql.addWidget(self.chk_qty)
+        ql.addStretch(1)
+        g.addWidget(qw, r, 1, Qt.AlignLeft)
         r += 1
 
         dpw = QWidget()
@@ -197,6 +272,44 @@ class BubbleDialog(QDialog):
         self.v_cbd = Var(self.e_cbd.text, self.e_cbd.setText)
         self.v_cbz = Var(self.e_cbz.text, self.e_cbz.setText)
         g.addWidget(dpw, r, 0, 1, 2)
+        r += 1
+        csw = QWidget()
+        csl = QHBoxLayout(csw)
+        csl.setContentsMargins(0, 0, 0, 0)
+        csl.addWidget(QLabel(tr('CSink \u00d8:')))
+        self.e_csd = _line_edit(70)
+        self.e_csd.setEnabled(False)
+        csl.addWidget(self.e_csd)
+        csl.addWidget(QLabel(tr('depth:')))
+        self.e_csz = _line_edit(70)
+        self.e_csz.setEnabled(False)
+        csl.addWidget(self.e_csz)
+        csl.addStretch(1)
+        self.v_csd = Var(self.e_csd.text, self.e_csd.setText)
+        self.v_csz = Var(self.e_csz.text, self.e_csz.setText)
+        g.addWidget(csw, r, 0, 1, 2)
+        r += 1
+        tdw = QWidget()
+        tdl = QHBoxLayout(tdw)
+        tdl.setContentsMargins(0, 0, 0, 0)
+        from .scanrows import facet_skipped
+        self.chk_tap = QCheckBox(tr('Tap drill \u00d8:'))
+        self.chk_tap.setChecked(not facet_skipped("tap_drill", self.cfg))
+        self.chk_tap.setToolTip(tr('Bubble the tap drill under this '
+                                   'thread too. Settings sets the default.'))
+        self.chk_tap.toggled.connect(lambda _on: self._type_changed())
+        tdl.addWidget(self.chk_tap)
+        self.e_tdd = _line_edit(70)
+        self.e_tdd.setEnabled(False)
+        tdl.addWidget(self.e_tdd)
+        tdl.addWidget(QLabel(tr('depth:')))
+        self.e_tdz = _line_edit(70)
+        self.e_tdz.setEnabled(False)
+        tdl.addWidget(self.e_tdz)
+        tdl.addStretch(1)
+        self.v_tdd = Var(self.e_tdd.text, self.e_tdd.setText)
+        self.v_tdz = Var(self.e_tdz.text, self.e_tdz.setText)
+        g.addWidget(tdw, r, 0, 1, 2)
         r += 1
 
         sep = QFrame()
@@ -249,6 +362,12 @@ class BubbleDialog(QDialog):
         g.addWidget(self.e_pin, r, 1, Qt.AlignLeft)
         r += 1
 
+        g.addWidget(QLabel(tr('Comment')), r, 0, Qt.AlignLeft)
+        self.e_comment = _line_edit(220)
+        self.v_comment = Var(self.e_comment.text, self.e_comment.setText)
+        g.addWidget(self.e_comment, r, 1, Qt.AlignLeft)
+        r += 1
+
         self.chk_leader = QCheckBox(tr('Leader line'))
         self.chk_leader.setChecked(True if leader_default is None
                                    else bool(leader_default))
@@ -288,6 +407,16 @@ class BubbleDialog(QDialog):
 
         if edit_row:
             self._prefill(edit_row)
+            for f, var in (("depth", self.v_dep), ("cbore", self.v_cbd),
+                           ("cbore_depth", self.v_cbz), ("csink", self.v_csd),
+                           ("csink_depth", self.v_csz),
+                           ("tap_drill", self.v_tdd),
+                           ("tap_drill_depth", self.v_tdz)):
+                s = self._siblings.get(f)
+                if s is not None and s.get("nominal") is not None:
+                    var.set(_num_text(s["nominal"]))
+            if "tap_drill" in self._siblings:
+                self.chk_tap.setChecked(True)
         elif prefill:
             self._prefill(prefill)
 
@@ -296,8 +425,30 @@ class BubbleDialog(QDialog):
         self._iso_autofill()
         if at:
             self.move(int(at[0]), int(at[1]))
+        for e in self._unit_fields():
+            e.editingFinished.connect(
+                lambda e=e: self._convert_units(e))
+            if not e.toolTip():
+                e.setToolTip(tr('Type a unit to convert it: 1.5in or '
+                                '25.4mm becomes the drawing\'s unit.'))
         retranslate(self)
         self.e_nom.setFocus()
+
+    def _unit_fields(self):
+        return [getattr(self, n) for n in (
+            # not angle side, 2768 angle table mm
+            "e_nom", "e_ref", "e_dep", "e_cbd", "e_cbz", "e_csd", "e_csz",
+            "e_tdd", "e_tdz", "e_tsym", "e_tmax", "e_tmin", "e_pin")
+            if getattr(self, n, None) is not None]
+
+    def _convert_units(self, e):
+        out = convert_unit_text(e.text(), units_of(self.cfg, self.session))
+        if out is None or out == e.text():
+            return False
+        e.setText(out)
+        if e is self.e_nom:
+            self._iso_autofill()
+        return True
 
     def _record_geo(self):
         self.last_geo = (self.x(), self.y())
@@ -312,9 +463,13 @@ class BubbleDialog(QDialog):
         if d.get("feature"):
             self.v_feat.set(d["feature"])
         if d.get("nominal") is not None:
-            self.v_nom.set("%g" % d["nominal"])
+            self.v_nom.set(_num_text(d["nominal"]))
         if d.get("pin") is not None:
-            self.v_pin.set("%g" % d["pin"])
+            self.v_pin.set(_num_text(d["pin"]))
+        if d.get("comment"):
+            self.v_comment.set(str(d["comment"]))
+        # bound rides through, no control
+        self._limit = d.get("limit")
         if "tier" in d and self.edit:
             self.v_tier.set(d.get("tier") or "")
         self.v_tsym.set("")
@@ -323,15 +478,17 @@ class BubbleDialog(QDialog):
         self._tsym_user = False
         self._mm_user = False
         self._no_gentol = bool(d.get("no_gentol"))
+        # reader's flag holds while row unchanged
+        self._flag_key = (self.v_type.get(), self.v_feat.get())
         self.chk_edge.setChecked(bool(d.get("edge_break")))
         if d.get("tol_sym") is not None:
-            self.v_tsym.set("%g" % d["tol_sym"])
+            self.v_tsym.set(_num_text(d["tol_sym"]))
             self._tsym_user = True
         elif d.get("tol_max") is not None or d.get("tol_min") is not None:
             if d.get("tol_max") is not None:
-                self.v_tmax.set("%g" % d["tol_max"])
+                self.v_tmax.set(_num_text(d["tol_max"]))
             if d.get("tol_min") is not None:
-                self.v_tmin.set("%g" % d["tol_min"])
+                self.v_tmin.set(_num_text(d["tol_min"]))
             self._mm_user = True
 
     def _feat_changed(self):
@@ -339,30 +496,65 @@ class BubbleDialog(QDialog):
         self._iso_autofill()
 
     def _sync_angside(self):
-        """Side-length row only for angle when asked."""
         on = (not self._ang_short) and is_angle_feature(self.v_feat.get())
         self.lbl_angside.setVisible(on)
         self.w_angside.setVisible(on)
         self._sync_edge()
 
     def _sync_edge(self):
-        """Offer broken-edge tick only on radius or chamfer."""
         feat = self.v_feat.get()
         on = is_radius_feature(feat) and not is_broken_edge(feat)
         self.chk_edge.setVisible(on)
         if not on and self.chk_edge.isChecked():
             self.chk_edge.setChecked(False)
 
+    def _build_group(self, g, r, rows, at):
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+        g.addWidget(QLabel(tr('Rows under this balloon')), r, 0, 1, 2,
+                    Qt.AlignLeft)
+        r += 1
+        t = QTableWidget(len(rows), 4)
+        t.setHorizontalHeaderLabels([tr('No.'), tr('Type'), tr('Feature'),
+                                     tr('Requirement')])
+        t.verticalHeader().setVisible(False)
+        t.setEditTriggers(QTableWidget.NoEditTriggers)
+        t.setSelectionBehavior(QTableWidget.SelectRows)
+        t.setSelectionMode(QTableWidget.SingleSelection)
+        for i, row in enumerate(rows):
+            for c, key in enumerate(("bubble", "type", "feature",
+                                     "requirement")):
+                txt = str(row.get(key) or "")
+                if key == "type":
+                    txt = tr(txt) if txt else ""
+                t.setItem(i, c, QTableWidgetItem(txt))
+        t.resizeColumnsToContents()
+        t.setMaximumHeight(min(160, 30 + 24 * len(rows)))
+        t.selectRow(max(0, min(at, len(rows) - 1)))
+        self._group_at = at
+        t.cellClicked.connect(self._group_pick)
+        g.addWidget(t, r, 0, 1, 3)
+        self._group_tbl = t
+        return r + 1
+
+    def _group_pick(self, row, _col=0):
+        """Apply this row first, caller opens `switch_to`."""
+        if row == self._group_at:
+            return
+        self.result_rows = None
+        self.switch_to = row
+        self._ok()
+        if self.result_rows is None:
+            self.switch_to = None
+            self._group_tbl.selectRow(self._group_at)
+
     def _side_mm(self):
-        """Shorter side mm for angular table or None when unknown."""
         if self._ang_short:
             return ANGLE_SHORTEST_SIDE
         if self.cb_angside.currentData() != "shorter":
             return ANGLE_SHORTEST_SIDE
-        return fnum(self.v_angside.get())
+        return _num(self.v_angside.get(), tr('Angle side'))
 
     def _gentol(self, nom, raw=None):
-        """General tolerance for row via scanlib.general_tol."""
         if self.edit:
             return None
         feat = self.v_feat.get()
@@ -371,33 +563,41 @@ class BubbleDialog(QDialog):
         return general_tol({"type": self.v_type.get(), "feature": feat,
                             "v": raw, "nominal": nom,
                             "edge_break": self.chk_edge.isChecked(),
-                            "no_gentol": self._no_gentol},
+                            "no_gentol": self._flagged()},
                            self.gtols, self.cfg, self.session,
                            icls=self.icls, iso_on=self.iso_on,
                            side_mm=self._side_mm()).value
 
     def _gentol_why(self):
-        """Why row takes no general tolerance or None."""
         why = gentol_exempt({"type": self.v_type.get(),
                              "feature": self.v_feat.get(),
-                             "v": self.v_nom.get() or self.v_feat.get()},
+                             "v": self.v_nom.get() or self.v_feat.get(),
+                             "limit": getattr(self, "_limit", None)},
                             self.cfg)
-        return why or ("flagged" if self._no_gentol else None)
+        return why or ("flagged" if self._flagged() else None)
+
+    def _flagged(self):
+        """Capture exemption, only while row still as read."""
+        return (self._no_gentol and (self.v_type.get(), self.v_feat.get())
+                == getattr(self, "_flag_key", None))
 
     def _iso_excluded(self):
-        """Any reason ISO 2768 says nothing here."""
         return self._gentol_why() is not None
 
     def _iso_ladder(self):
-        """Does ISO 2768 ladder own drawing."""
         return gentol_ladder(self.cfg, self.session) == "iso2768"
 
     def _type_changed(self, user=False):
         t = self.v_type.get()
         hole = t.startswith(("hole", "thru"))
-        st = hole and not self.edit
-        for e in (self.e_dep, self.e_cbd, self.e_cbz):
+        st = hole and (not self.edit or self._facet_edit)
+        for e in (self.e_dep, self.e_cbd, self.e_cbz, self.e_csd, self.e_csz):
             e.setEnabled(st)
+        tap = (t.startswith("thread")
+               and (not self.edit or self._facet_edit))
+        self.chk_tap.setEnabled(tap)
+        for e in (self.e_tdd, self.e_tdz):
+            e.setEnabled(tap and self.chk_tap.isChecked())
         dimensional = t != "GD&T" and not t.startswith("finish")
         self.e_pin.setEnabled(dimensional)
         self.chk_inv.setEnabled(dimensional)
@@ -433,7 +633,7 @@ class BubbleDialog(QDialog):
                 self.v_tmax.get().strip() or self.v_tmin.get().strip():
             return
         if not self._iso_ladder():
-            return                     # decimal block owns drawing
+            return
         if units_of(self.cfg, self.session) != "iso_mm":
             return
         why = self._gentol_why()
@@ -480,9 +680,15 @@ class BubbleDialog(QDialog):
                     % (raw_sym, nom))
             out["tol_max"], out["tol_min"] = lim
             return out
-        tmax = fnum(self.v_tmax.get())
-        tmin = fnum(self.v_tmin.get())
-        tsym = fnum(self.v_tsym.get())
+        if is_fit_code(raw_sym):
+            # ISO fit on inch drawing unread
+            raise ValueError(
+                tr('Fit %s is an ISO 286 code for millimetre sizes. This '
+                   'drawing is in inches: enter the tolerance as numbers '
+                   'instead.') % raw_sym)
+        tmax = _tol_num(self.v_tmax.get())
+        tmin = _tol_num(self.v_tmin.get())
+        tsym = _tol_num(self.v_tsym.get())
         if tmax is not None or tmin is not None:
             out["tol_max"], out["tol_min"] = tmax, tmin
         elif tsym is not None:
@@ -494,7 +700,6 @@ class BubbleDialog(QDialog):
         return out
 
     def _tol_for_feature(self, nom, is_dia=False, raw=None):
-        """Tolerance for one hole-pattern sub-row."""
         raw_sym = self.v_tsym.get().strip()
         if self._metric() and is_fit_code(raw_sym) and not is_dia:
             # fit code is diameter's
@@ -506,7 +711,7 @@ class BubbleDialog(QDialog):
         return self._resolve_tol(nom, raw=raw)
 
     def _pin_for(self, nom, is_dia):
-        p = fnum(self.v_pin.get())
+        p = _num(self.v_pin.get(), tr('Pin \u00d8'))
         if p is not None:
             return p if is_dia else None
         if is_dia and nom is not None and \
@@ -515,13 +720,15 @@ class BubbleDialog(QDialog):
         return None
 
     def _collect(self):
+        for e in self._unit_fields():  # OK before leaving
+            self._convert_units(e)
         try:
             nom = fnum(self.v_nom.get())
         except ValueError:
             nom = None
         feat = self.v_feat.get().strip()
         if nom is not None and self.v_inv.get():
-            ref = fnum(self.v_ref.get())
+            ref = _num(self.v_ref.get(), tr('Overall'))
             if ref is None:
                 raise ValueError(tr('Invert needs overall'))
             inv = round(ref - nom, 4)
@@ -548,11 +755,22 @@ class BubbleDialog(QDialog):
             base["qty"] = self.v_qty.get()
         tol = self._resolve_tol(nom, raw=self.v_nom.get())
 
-        dep = fnum(self.v_dep.get()) if hole else None
-        cbd = fnum(self.v_cbd.get()) if hole else None
-        cbz = fnum(self.v_cbz.get()) if hole else None
+        dep = _num(self.v_dep.get(), tr('Depth')) if hole else None
+        cbd = _num(self.v_cbd.get(), tr('CBore \u00d8')) if hole else None
+        cbz = _num(self.v_cbz.get(), tr('CBore depth')) if hole else None
         if cbz is not None and cbd is None:
             raise ValueError(tr('CBore depth needs CBore Ø'))
+        csd = _num(self.v_csd.get(), tr('CSink \u00d8')) if hole else None
+        csz = _num(self.v_csz.get(), tr('CSink depth')) if hole else None
+        if csz is not None and csd is None:
+            raise ValueError(tr('CSink depth needs CSink \u00d8'))
+        tapped = t.startswith("thread") and self.chk_tap.isChecked()
+        tdd = _num(self.v_tdd.get(), tr('Tap drill \u00d8')) if tapped \
+            else None
+        tdz = _num(self.v_tdz.get(), tr('Tap drill depth')) if tapped \
+            else None
+        if tdz is not None and tdd is None:
+            raise ValueError(tr('Tap drill depth needs tap drill \u00d8'))
 
         def row(ft, nm, is_dia=False, typ=None, raw=None):
             d = dict(base)
@@ -565,19 +783,33 @@ class BubbleDialog(QDialog):
             return d
 
         def extras(tag=""):
-            out = []
+            made = {}
             if dep is not None:
-                out.append(row(("depth%s" % tag), dep,
-                               typ="depth",
-                               raw=self.v_dep.get()))
+                made["depth"] = row(("depth%s" % tag), dep, typ="depth",
+                                    raw=self.v_dep.get())
             if cbd is not None:
-                out.append(row((u"cbore Ø%s" % tag), cbd, is_dia=True,
-                               raw=self.v_cbd.get()))
+                made["cbore"] = row((u"cbore \u00d8%s" % tag), cbd,
+                                    is_dia=True, raw=self.v_cbd.get())
             if cbz is not None:
-                out.append(row(("cbore depth%s" % tag), cbz,
-                               typ="depth",
-                               raw=self.v_cbz.get()))
-            return out
+                made["cbore_depth"] = row(("cbore depth%s" % tag), cbz,
+                                          typ="depth", raw=self.v_cbz.get())
+            if csd is not None:
+                made["csink"] = row((u"csink \u00d8%s" % tag), csd,
+                                    is_dia=True, raw=self.v_csd.get())
+            if csz is not None:
+                made["csink_depth"] = row(("csink depth%s" % tag), csz,
+                                          typ="depth", raw=self.v_csz.get())
+            if tdd is not None:
+                made["tap_drill"] = row((u"tap drill \u00d8%s" % tag), tdd,
+                                        is_dia=True, typ="hole",
+                                        raw=self.v_tdd.get())
+            if tdz is not None:
+                made["tap_drill_depth"] = row(("tap drill depth%s" % tag),
+                                              tdz, typ="depth",
+                                              raw=self.v_tdz.get())
+            for f, r_ in made.items():
+                r_["facet"] = f
+            return [made[f] for f in facet_order(self.cfg) if f in made]
 
         suffix = ""
         if self.sub_idx > 0:
@@ -588,12 +820,24 @@ class BubbleDialog(QDialog):
         d["feature"] = feat
         d["nominal"] = nom
         d["pin"] = self._pin_for(nom, hole)
+        d["comment"] = self.v_comment.get().strip()  # main row only
+        lim = getattr(self, "_limit", None)
+        if lim and keeps_limit(d, lim):
+            d["limit"] = lim
         rows = [d]
-        if not self.edit:
+        if self._facet_edit and (hole or t.startswith("thread")):
+            # blank facet means removed
+            d["facet"] = "hole"
+            rows.extend(extras())
+        elif not self.edit:
             ex = extras()
             for x in ex:
                 x["bubble"] = str(self.bubble_no)
             rows.extend(ex)
+            if ex:
+                d["facet"] = "hole"
+                order = facet_order(self.cfg)
+                rows.sort(key=lambda r_: order.index(r_["facet"]))
         for _r in rows:
             _r["leader"] = bool(self.v_leader.get())
         return rows
@@ -608,12 +852,14 @@ class BubbleDialog(QDialog):
     def _sub(self):
         try:
             self._push()
+            self._limit = None
         except ValueError as e:
             QMessageBox.critical(self, tr('Error'), str(e))
             return
         self.sub_idx = len(self.rows)
         for v in (self.v_feat, self.v_nom, self.v_pin, self.v_ref,
-                  self.v_dep, self.v_cbd, self.v_cbz):
+                  self.v_dep, self.v_cbd, self.v_cbz, self.v_csd,
+                  self.v_csz, self.v_tdd, self.v_tdz, self.v_comment):
             v.set("")
         self.v_qty.set(1)
         self.v_inv.set(False)
@@ -648,6 +894,7 @@ class BubbleDialog(QDialog):
             QMessageBox.critical(self, tr('Error'), str(e))
             return
         self.result_rows = self.rows
+        self.qty_ticked = bool(self.chk_qty.isChecked())
         self.last_out = self._snapshot()
         self.new_number = None
         if self.v_bubnum is not None:

@@ -5,7 +5,8 @@
 
 from .common import (RADIUS, SHAPES, base_of, shape_body, shape_extent,
                      shape_radius, shape_support, tier_shape)
-from .scanpos import page_words, xform_pt, xform_rect
+from .reader.geometry import xform_pt, xform_rect
+from .reader.textlayer import page_words
 from .i18n import tr
 
 DIAG = 0.7071067811865476
@@ -20,6 +21,9 @@ W_DIST = 1.0        # per r off ring
 W_TIP = 0.8         # per 4r visible leader
 W_WORD = 12.0       # balloon fully on text
 W_WORDHIT = 6.0     # balloon touches text
+# other callout boxes, below text
+W_BOX = 6.0
+W_BOXHIT = 2.0
 W_STUB = 2.0        # leader swallowed by balloon
 W_TUCK = 2.0        # per r inside ring
 W_SEG = 3.0         # per thick stroke touched
@@ -28,6 +32,7 @@ W_LEADHIT = 3.0     # balloon parked on leader
 W_XLEAD = 2.0       # leader crossing leader
 W_XWORD = 1.5       # leader crossing text
 W_PREF = 2.5        # not preferred side
+W_PREF_SET = 25.0   # user-set side, beats text
 W_DIAG = 0.4        # diagonal not cardinal
 W_PERP = 0.5        # per r sideways shift
 W_NEIGH = 1.2       # differs from nearby balloons
@@ -101,7 +106,6 @@ def _cross(ax, ay, bx, by):
 
 
 def seg_hits_seg(a, b):
-    """Proper segment intersection"""
     x1, y1, x2, y2 = a
     x3, y3, x4, y4 = b
     d1 = _cross(x2 - x1, y2 - y1, x3 - x1, y3 - y1)
@@ -145,7 +149,6 @@ def _near(items, box, key):
 
 
 def placement_context(ax, ay, rect, occ, r, pref="auto", shape="circle"):
-    """Prefiltered occupancy + neighbour direction weights"""
     occ = occ or {}
     rad = shape_radius(shape, r)
     self_reach = shape_extent(shape, r)
@@ -157,6 +160,7 @@ def placement_context(ax, ay, rect, occ, r, pref="auto", shape="circle"):
     by1 = (rect[3] if rect else ay) + reach
     box = (bx0, by0, bx1, by1)
     words = _near(occ.get("words") or (), box, lambda rc: rc)
+    boxes = _near(occ.get("boxes") or (), box, lambda rc: rc)
     segs = _near(occ.get("segs") or (), box,
                  lambda s: (min(s[0], s[2]), min(s[1], s[3]),
                             max(s[0], s[2]), max(s[1], s[3])))
@@ -186,6 +190,7 @@ def placement_context(ax, ay, rect, occ, r, pref="auto", shape="circle"):
         total_w += w
     centres = _near(centres, box, lambda p: (p[0], p[1], p[0], p[1]))
     return {"words": words, "segs": segs, "centres": centres,
+            "boxes": boxes,
             "leads": leads, "dirw": dirw, "total_w": total_w,
             "page": occ.get("page"), "pref": pref, "r": r, "g": g,
             "rad": rad, "reach": self_reach, "shape": shape,
@@ -194,7 +199,6 @@ def placement_context(ax, ay, rect, occ, r, pref="auto", shape="circle"):
 
 
 def _support_toward(ctx, vx, vy):
-    """Drawn reach toward (vx, vy)"""
     ln = (vx * vx + vy * vy) ** 0.5
     if ln < 1e-9:
         return ctx.get("rad", ctx["r"])
@@ -203,12 +207,10 @@ def _support_toward(ctx, vx, vy):
 
 
 def placement_cost(cx, cy, dname, dvec, dist, perp, ctx):
-    """Pure cost of one balloon spot"""
     r = ctx["r"]                      # config radius cost scale
     rad = ctx.get("rad", r)           # drawn radius
     reach = ctx.get("reach", rad)     # outermost points
     body = ctx.get("body", rad * 0.92)   # covers ink
-    # tuck penalty per r
     cost = W_DIST * (abs(dist) / r) + W_TUCK * (max(0.0, -dist) / r) \
         + W_PERP * (abs(perp) / r)
     page = ctx.get("page")
@@ -220,9 +222,14 @@ def placement_cost(cx, cy, dname, dvec, dist, perp, ctx):
     frac = 0.0
     for rc in ctx["words"]:
         frac += rect_overlap_frac(cx, cy, body, rc)
-    # touching text is expensive
     if frac > 0.0:
         cost += W_WORDHIT + W_WORD * min(1.0, frac)
+    # callout boxes: cost not veto
+    bfrac = 0.0
+    for rc in ctx.get("boxes") or ():
+        bfrac += rect_overlap_frac(cx, cy, body, rc)
+    if bfrac > 0.0:
+        cost += W_BOXHIT + W_BOX * min(1.0, bfrac)
     nseg = 0
     for s in ctx["segs"]:
         if circle_hits_seg(cx, cy, rad * 0.8, s):
@@ -232,13 +239,11 @@ def placement_cost(cx, cy, dname, dvec, dist, perp, ctx):
     cost += W_SEG * nseg
     for c in ctx["centres"]:
         px, py = c[0], c[1]
-        # outline to outline
         sep = reach + (c[2] if len(c) > 2 else r) + BUB_CLEAR * r
         d = ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
         if d < sep:
             cost += W_BUB * ((sep - d) / r)
     ax, ay = ctx["ax"], ctx["ay"]
-    # leader enters anchor side
     sup = _support_toward(ctx, ax - cx, ay - cy)
     tx, ty = leader_tip(ax, ay, cx, cy, ctx["words"], sup)
     tip_len = max(0.0, ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5 - sup)
@@ -266,7 +271,7 @@ def placement_cost(cx, cy, dname, dvec, dist, perp, ctx):
             break
     pref = ctx["pref"]
     if pref in CARDINALS and dname != pref:
-        cost += W_PREF
+        cost += W_PREF_SET
     if dname not in CARDINALS:
         cost += W_DIAG
     if ctx["total_w"] > 0:
@@ -279,7 +284,6 @@ def placement_cost(cx, cy, dname, dvec, dist, perp, ctx):
 
 
 def _off_blocked(px, py, dx, dy, body, rc):
-    """Ray offsets where body box touches rc"""
     lo, hi = -1e18, 1e18
     for p, c0, c1, q in ((dx, rc[0] - body, rc[2] + body, px),
                          (dy, rc[1] - body, rc[3] + body, py)):
@@ -321,14 +325,12 @@ def _clear_offsets(px, py, dx, dy, body, words, off0, floor, keep=2):
 
 def rank_placements(ax, ay, rect, occ, r, pref="auto", limit=8,
                     shape="circle"):
-    """Deterministic scored candidates cheapest first"""
     ctx = placement_context(ax, ay, rect, occ, r, pref, shape)
     g, body = ctx["g"], ctx["body"]
     step = r * 0.5
     out = []
     best = None
     edges = {}
-    # ring first then out-in
     for i in _BAND:
         dist = i * step
         if best is not None and best < W_DIST * (abs(dist) / r):
@@ -344,7 +346,7 @@ def rank_placements(ax, ay, rect, occ, r, pref="auto", limit=8,
                     ey = rect[3]
                 elif dy < 0:
                     ey = rect[1]
-            back = _support_toward(ctx, -dx, -dy)   # reach on leader side
+            back = _support_toward(ctx, -dx, -dy)
             edges[dname] = (ex, ey, back)
             off = back + g + i * step
             if off < body:                          # never swallow anchor
@@ -359,7 +361,7 @@ def rank_placements(ax, ay, rect, occ, r, pref="auto", limit=8,
                 out.append((c, cx, cy, dname))
                 if best is None or c < best:
                     best = c
-    for dname, (dx, dy) in DIRS:                    # snap into gap
+    for dname, (dx, dy) in DIRS:
         got = edges.get(dname)
         if got is None:
             continue
@@ -382,32 +384,82 @@ def rank_placements(ax, ay, rect, occ, r, pref="auto", limit=8,
 
 
 def best_placement(ax, ay, rect, occ, r, pref="auto", shape="circle"):
-    """Cheapest balloon centre per anchor"""
     ranked = rank_placements(ax, ay, rect, occ, r, pref, limit=1, shape=shape)
     if not ranked:
         return (ax + shape_support(shape, r, 1.0, 0.0) + r * GAP_F, ay)
     return (ranked[0][1], ranked[0][2])
 
 
-def noleader_center(ax, ay, rect, r, shape="circle", pref="auto"):
-    """Centre for a leaderless balloon, pushed just outside the callout box."""
+def noleader_place(ax, ay, rect, occ, r, shape="circle", pref="auto"):
+    """Beside own box, slid along it when blocked."""
     if not rect:
         return ax, ay
     x0, y0, x1, y1 = rect
-    cxr, cyr = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-    d = {"n": (0.0, -1.0), "s": (0.0, 1.0),
-         "e": (1.0, 0.0), "w": (-1.0, 0.0)}.get(pref)
-    if d is None:                         # away from box centre
-        vx, vy = ax - cxr, ay - cyr
-        if abs(vx) >= abs(vy):
-            d = (1.0, 0.0) if vx >= 0 else (-1.0, 0.0)
-        else:
-            d = (0.0, 1.0) if vy >= 0 else (0.0, -1.0)
-    dx, dy = d
-    gap = shape_support(shape, r, dx, dy) + GAP_F * r
-    if dx:
-        return (x1 if dx > 0 else x0) + dx * gap, ay
-    return ax, (y1 if dy > 0 else y0) + dy * gap
+    # scan anchor can sit far off text
+    cx, cy = min(max(ax, x0), x1), min(max(ay, y0), y1)
+    home = noleader_side(cx, cy, rect, pref)
+    occ = occ or {}
+    body, reach = shape_body(shape, r), shape_extent(shape, r)
+    span = reach * 2 + 7.0 * r
+    box = (x0 - span, y0 - span, x1 + span, y1 + span)
+    words = _near(occ.get("words") or (), box, lambda rc: rc)
+    boxes = _near(occ.get("boxes") or (), box, lambda rc: rc)
+    centres = []
+    for b in (occ.get("balloons") or ()):
+        if len(b) > 3 and b[2] is not None and b[3] is not None:
+            centres.append((b[2], b[3], shape_extent(
+                b[4] if len(b) > 4 else "circle", r)))
+    centres = _near(centres, box, lambda p: (p[0], p[1], p[0], p[1]))
+    page = occ.get("page")
+    best = None
+    for i, (dname, (dx, dy)) in enumerate(
+            (("e", (1.0, 0.0)), ("w", (-1.0, 0.0)),
+             ("s", (0.0, 1.0)), ("n", (0.0, -1.0)))):
+        gap0 = shape_support(shape, r, dx, dy) + GAP_F * r
+        for j, k in [(j, k) for j in range(4)
+                     for k in (0, 1, -1, 2, -2, 3, -3, 4, -4)]:
+            s = k * 0.75 * r
+            gap = gap0 + j * 0.75 * r          # further out, same side
+            if dx:
+                px, py = (x1 if dx > 0 else x0) + dx * gap, cy + s
+            else:
+                px, py = cx + s, (y1 if dy > 0 else y0) + dy * gap
+            cost = W_PERP * abs(s) / r + W_DIST * 0.75 * j
+            if dname != home:
+                cost += W_PREF * 0.6
+            if pref in CARDINALS and dname != pref:
+                cost += W_PREF_SET
+            frac = sum(rect_overlap_frac(px, py, body, rc) for rc in words)
+            if frac > 0.0:
+                cost += W_WORDHIT + W_WORD * min(1.0, frac)
+            bfrac = sum(rect_overlap_frac(px, py, body, rc) for rc in boxes)
+            if bfrac > 0.0:
+                cost += W_BOXHIT + W_BOX * min(1.0, bfrac)
+            for ox, oy, oext in centres:
+                sep = reach + oext + BUB_CLEAR * r
+                d = ((ox - px) ** 2 + (oy - py) ** 2) ** 0.5
+                if d < sep:
+                    cost += W_BUB * ((sep - d) / r)
+            if page:
+                over = max(0.0, 2.0 + reach - px, 2.0 + reach - py,
+                           px + reach + 2.0 - page[0],
+                           py + reach + 2.0 - page[1])
+                if over > 0:
+                    cost += W_OFFPAGE * (over / r)
+            key = (round(cost, 6), i, j, abs(k))
+            if best is None or key < best[0]:
+                best = (key, px, py)
+    return best[1], best[2]
+
+
+def noleader_side(ax, ay, rect, pref="auto"):
+    if pref in CARDINALS:
+        return pref
+    x0, y0, x1, y1 = rect
+    vx, vy = ax - (x0 + x1) / 2.0, ay - (y0 + y1) / 2.0
+    if abs(vx) >= abs(vy):
+        return "e" if vx >= 0 else "w"
+    return "s" if vy >= 0 else "n"
 
 
 class GeometryMixin:
@@ -431,21 +483,26 @@ class GeometryMixin:
     _circle_hits_seg = staticmethod(circle_hits_seg)
 
     def place_bubble(self, ax, ay, page_i=None, rect=None, lead=None,
-                     tier=None):
-        """Balloon centre + leader flag in step"""
+                     tier=None, skip=None):
+        """Balloon centre + leader flag in step. `skip` = own number."""
         if lead is None:
             lead = self.use_leaders()
         if not lead:
+            if page_i is None:
+                page_i = self.page_i
             r = max(1.0, float(self.cfg.get("radius", RADIUS)))
-            bx, by = noleader_center(ax, ay, rect, r,
-                                     tier_shape(tier, self.cfg),
-                                     self.cfg.get("offset_dir", "auto"))
+            occ = self._placement_occ(page_i, ax, ay, rect)
+            if skip is not None:
+                occ["balloons"] = [b for b in occ["balloons"]
+                                   if b[5] != skip]
+            bx, by = noleader_place(ax, ay, rect, occ,
+                                    r, tier_shape(tier, self.cfg),
+                                    self.cfg.get("offset_dir", "auto"))
             return bx, by, False
         bx, by = self.auto_offset(ax, ay, page_i=page_i, rect=rect, tier=tier)
         return bx, by, True
 
     def _bubble_tiers(self, page_i):
-        """base number -> tier per neighbour"""
         out = {}
         for d in (getattr(self, "ledger", None) or ()):
             if d.get("page") != page_i:
@@ -459,6 +516,12 @@ class GeometryMixin:
         if page_i is None:
             page_i = self.page_i
         r = max(1.0, float(self.cfg.get("radius", RADIUS)))   # r=0 div-0
+        occ = self._placement_occ(page_i, ax, ay, rect)
+        pref = self.cfg.get("offset_dir", "auto")
+        return best_placement(ax, ay, rect, occ, r, pref,
+                              tier_shape(tier, self.cfg))
+
+    def _placement_occ(self, page_i, ax, ay, rect):
         try:
             pr = self.doc[page_i].rect
             page = (float(pr.width), float(pr.height))
@@ -470,16 +533,40 @@ class GeometryMixin:
             words, segs = [], []
         tiers = self._bubble_tiers(page_i)
         balloons = [(oax, oay, obx, oby,
-                     tier_shape(tiers.get(n), self.cfg))
+                     tier_shape(tiers.get(n), self.cfg), n)
                     for n, oax, oay, obx, oby in self.page_bubbles(page_i)]
-        occ = {"words": words, "segs": segs, "balloons": balloons,
-               "page": page}
-        pref = self.cfg.get("offset_dir", "auto")
-        return best_placement(ax, ay, rect, occ, r, pref,
-                              tier_shape(tier, self.cfg))
+        return {"words": words, "segs": segs, "balloons": balloons,
+                "page": page, "boxes": self._page_boxes(page_i, ax, ay, rect)}
+
+    def _page_boxes(self, page_i, ax, ay, rect=None):
+        """Other callouts' boxes as obstacles, never this balloon's own."""
+        if not self.cfg.get("placement_box_obstacles", True):
+            return []
+
+        def mine(x, y):
+            try:
+                return abs(float(x) - ax) < 0.01 and abs(float(y) - ay) < 0.01
+            except (TypeError, ValueError):
+                return False
+        out, seen = [], set()
+        src = [d.get("rect") for d in (getattr(self, "ledger", None) or ())
+               if d.get("page") == page_i and not mine(d.get("x"), d.get("y"))]
+        src += [b[0] for b in (getattr(self, "_batch_boxes", None) or {})
+                .get(page_i, ()) if not mine(b[1], b[2])]
+        own = tuple(float(v) for v in rect) if rect else None
+        for rc in src:
+            if not rc or len(rc) < 4:
+                continue
+            b = tuple(float(v) for v in rc[:4])
+            if b in seen or b == own:
+                continue
+            if b[0] <= ax <= b[2] and b[1] <= ay <= b[3]:
+                continue
+            seen.add(b)
+            out.append(b)
+        return out
 
     def _leader_target(self, page_i, bx, by, ax, ay):
-        """Leader end point"""
         r = float(self.cfg.get("radius", RADIUS))
         key = (page_i, round(bx, 1), round(by, 1), round(ax, 1), round(ay, 1),
                round(r, 1))

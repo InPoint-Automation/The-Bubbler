@@ -205,7 +205,6 @@ def icon_button(name, callback=None, tip="", label=None, color=None,
 
 
 def menu_button(name, tip="", label=None, items=(), color=None, size=22):
-    """Flat tool button popping menu of (icon, text, callback) items."""
     from PySide6.QtWidgets import QMenu
     size = max(1, int(round(size * UI_SCALE)))
     b = QToolButton()
@@ -232,7 +231,11 @@ def menu_button(name, tip="", label=None, items=(), color=None, size=22):
     if tip:
         b.setToolTip(tr(tip))
     m = QMenu(b)
-    for ic, text, cb in items:
+    for item in items:
+        if item is None:
+            m.addSeparator()
+            continue
+        ic, text, cb = item
         act = m.addAction(make_icon(ic, color, 16) if ic else QIcon(), tr(text))
         act.triggered.connect(lambda _c=False, f=cb: f())
     b.setMenu(m)

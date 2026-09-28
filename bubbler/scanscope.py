@@ -8,11 +8,10 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
                                QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from .i18n import tr
-from .scanlib import SCAN_BUCKETS, SCAN_PRESETS, scan_presets
+from .scanrows import SCAN_BUCKETS, SCAN_PRESETS, scan_presets
 
 
 def bucket_label(name):
-    """Human words plus example per bucket."""
     return {
         "gdt": tr('GD&T and true position'),
         "finish": tr('Surface finish (Ra, Rz)'),
@@ -25,7 +24,6 @@ def bucket_label(name):
 
 
 class ScopeDialog(QDialog):
-    """Add retune remove scan-review presets."""
 
     def __init__(self, parent, cfg=None):
         super().__init__(parent)
@@ -62,7 +60,7 @@ class ScopeDialog(QDialog):
         for label, slot in ((tr('Add...'), self._add),
                             (tr('Rename...'), self._rename),
                             (tr('Remove'), self._remove),
-                            (tr('Reset'), self._reset)):   # shared key
+                            (tr('Reset'), self._reset)):
             b = QPushButton(label)
             b.clicked.connect(slot)
             btns.addWidget(b)
@@ -79,7 +77,6 @@ class ScopeDialog(QDialog):
         if self.list.count():
             self.list.setCurrentRow(0)
 
-    # ---------------------------------------------------------------- state
     def _fill(self, keep=None):
         self.list.blockSignals(True)
         self.list.clear()
@@ -101,14 +98,13 @@ class ScopeDialog(QDialog):
             c.blockSignals(False)
 
     def _changed(self):
-        """Tick edits current preset makes shop copy."""
+        """Tick edit makes shop copy of preset."""
         if not self.cur:
             return
         self.presets[self.cur] = [b for b in SCAN_BUCKETS
                                   if self.boxes[b].isChecked()]
         self.custom.add(self.cur)
 
-    # --------------------------------------------------------------- edits
     def _add(self):
         name, ok = QInputDialog.getText(self, tr('Add preset'), tr('Name'))
         name = (name or "").strip()
@@ -171,7 +167,6 @@ class ScopeDialog(QDialog):
         self.custom.discard(self.cur)
         self._pick(self.cur)
 
-    # -------------------------------------------------------------- result
     def result_presets(self):
         """Only what shop changed or added."""
         return {n: list(self.presets[n]) for n in sorted(self.custom)

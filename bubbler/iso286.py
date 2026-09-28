@@ -55,7 +55,6 @@ _FITCODE = _re.compile(r"^(JS|js|[A-HK-NPRSa-hk-nprs])(\d{1,2})$")
 
 
 def in_range(D):
-    """True if D within ISO 286 table 0 < D <= 500 mm"""
     return D is not None and 0 < D <= BANDS[-1]
 
 
@@ -172,7 +171,6 @@ def fit_limits(D, code):
 
 
 def is_fit_code(s):
-    """True if s resolvable fit class"""
     s = str(s or "").strip()
     if not _FITCODE.match(s):
         return False

@@ -39,7 +39,6 @@ def bubble_sortkey(bub):
 
 
 def cell_text(d, key, units=MM):
-    """One cell as shown."""
     if key == "nominal":
         return format_nominal(d.get("nominal"), units)
     if key == "tol":

@@ -24,8 +24,6 @@ def _to_pixmap(img):
 
 
 class StepChooseDialog(QDialog):
-    """First-open picker for up-axis and list thumb."""
-
     def __init__(self, parent, step_path, up="z", view="upper_right_front"):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -109,8 +107,6 @@ class StepChooseDialog(QDialog):
 
 
 class StepViewDialog(QDialog):
-    """In-app reference panel with two side-by-side views."""
-
     def __init__(self, parent, cfg, pdf):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
