@@ -2,11 +2,12 @@
 # Bubbler - Copyright (C) 2026 InPoint Automation Sp. z o.o.
 # Licensed under the GNU General Public License v3 or later; see LICENSE.
 #
-# Builds .build-venv for Nuitka. Per-OS deps + onnxruntime EP pin.
+# Builds .build-venv for Nuitka from the per-OS requirements.
 from __future__ import annotations
 
 import os
 import platform
+import re
 import subprocess
 import sys
 import venv
@@ -22,11 +23,14 @@ REQ_FILE = {
     "Darwin": "requirements-build-macos.txt",
 }
 
-EP_WHEEL = {
-    "Linux": "onnxruntime",
-    "Windows": "onnxruntime-directml",
-    "Darwin": "onnxruntime",
-}
+def ort_line(req: Path) -> tuple[str, str] | None:
+    """(package, version range) of the onnxruntime line in `req`."""
+    pat = re.compile(r"^\s*(onnxruntime(?:-[a-z]+)?)\s*([<>=!~][^#\s]*)")
+    for line in req.read_text(encoding="utf-8").splitlines():
+        m = pat.match(line)
+        if m:
+            return m.group(1), m.group(2)
+    return None
 
 
 def venv_python() -> str:
@@ -61,14 +65,18 @@ def main() -> int:
     run(py, "-m", "pip", "install", "-r", str(req))
     run(py, "-m", "pip", "install", "nuitka")
 
-    # Pin one onnxruntime EP
-    ep = EP_WHEEL[OS]
+    got = ort_line(req)
+    if not got:
+        print(f"No pinned onnxruntime line in {req.name}; refusing.")
+        return 1
+    ep, spec = got
     if OS == "Windows" and os.environ.get("BUBBLER_DML", "1") in ("0", "false"):
         ep = "onnxruntime"   # pure-CPU Windows build
-    print(f"=== Pinning onnxruntime EP: {ep} ===")
+    print(f"=== Pinning onnxruntime EP: {ep}{spec} ===")
+    # rapidocr pulls plain onnxruntime beside the EP
     run(py, "-m", "pip", "uninstall", "-y",
         "onnxruntime", "onnxruntime-gpu", "onnxruntime-directml")
-    run(py, "-m", "pip", "install", "--no-deps", ep)
+    run(py, "-m", "pip", "install", "--no-deps", ep + spec)
 
     print("\n=== build venv ready ===")
     print("Build with:")
