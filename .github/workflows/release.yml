@@ -1,0 +1,52 @@
+name: Release from existing build
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build (Nuitka) run ID"
+        required: true
+      tag:
+        description: "tag to release"
+        required: true
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Download artifacts from build run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+          merge-multiple: true
+      - name: Release notes
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          ls -la dist
+          printf '%s\n' "$TAG" > RELEASE_NOTES.md
+          awk -v t="$TAG" '
+            $0 ~ "^### Version " t "[[:space:]]*$" {f=1; next}
+            f && /^### Version / {exit}
+            f {print}
+          ' CHANGELOG.md >> RELEASE_NOTES.md
+          printf '\nBinaries built by run: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RUN_ID" >> RELEASE_NOTES.md
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/Bubbler.exe
+            dist/Bubbler-x86_64.AppImage
+            dist/Bubbler-macos.dmg
+          fail_on_unmatched_files: false
